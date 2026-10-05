@@ -352,7 +352,7 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                     "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;"
                     "padding:16px;text-align:center;"
                 ):
-                    ui.image("/assets/truck.png").props("fit=contain no-spinner").style(
+                    ui.image("/assets/truck.svg").props("fit=contain no-spinner").style(
                         "width:100%;max-width:280px;height:160px;margin:0 auto;"
                         "mix-blend-mode:multiply;"
                     )
