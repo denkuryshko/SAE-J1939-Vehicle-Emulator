@@ -9,9 +9,12 @@ start_on_launch = false   # START натискаєте самі в GUI
 
 [ecu]
 source_address = 0x00
-industry_group = 0
-vehicle_system = 0
-name = 0x0020000000000000
+# J1939-81 NAME (claimed on the bus), built from these fields:
+industry_group = 1        # 1 = On-Highway
+vehicle_system = 0        # 0 = Non-specific
+function = 0              # 0 = Engine
+manufacturer_code = 0
+identity_number = 0
 
 [vehicle]
 vin = "1HTMMAAL7GH123456"

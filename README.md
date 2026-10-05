@@ -13,7 +13,7 @@ Built with **python-can**, **can-j1939** and **NiceGUI**.
 |------|------------|
 | **Bus** | Real hardware auto-detect or Virtual (`vcan0` / `vcan1` / `vcan2`) · START / STOP / RESET · live TX stats |
 | **Signals** | 4 cyclic PGNs with live controls and presets · odometer and engine hours count up automatically while running |
-| **ECU / VIN** | Single node SA `0x00` · J1939-81 address claim · VIN on PGN 65260, `*`-terminated |
+| **ECU / VIN** | Single node SA `0x00` · J1939-81 address claim (NAME: Industry Group 1 On-Highway, Function 0 Engine) · VIN on PGN 65260, `*`-terminated |
 | **Requests** | Answers Request (PGN 59904), global or to SA `0x00`, for VIN and all broadcast PGNs |
 | **Diagnostics** | 2 injectable DTCs on DM1 (PGN 65226): SPN 110 / FMI 3, SPN 190 / FMI 0 |
 | **UI** | Web GUI (default `http://127.0.0.1:8080`) or interactive CLI |
@@ -255,9 +255,13 @@ start_on_launch = true    # CLI: start immediately
 
 [ecu]
 source_address = 0x00
-industry_group = 0
-vehicle_system = 0
-name = 0x0020000000000000
+# J1939-81 NAME (claimed on the bus), built from these fields:
+industry_group = 1        # 1 = On-Highway
+vehicle_system = 0        # 0 = Non-specific
+function = 0              # 0 = Engine
+manufacturer_code = 0
+identity_number = 0
+# Optional instead: name = 0x1000000000000000 (full 64-bit NAME; fields above override it)
 
 [vehicle]
 vin = "1HTMMAAL7GH123456"

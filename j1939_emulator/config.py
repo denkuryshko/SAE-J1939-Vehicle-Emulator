@@ -9,8 +9,8 @@ import tomllib
 from j1939_emulator.bus.detect import EmulationMode
 from j1939_emulator.diagnostics import DiagnosticState
 from j1939_emulator.ecu_identity import (
-    DEFAULT_NAME,
     DEFAULT_SOURCE_ADDRESS,
+    NAME_FIELDS,
     DEFAULT_VIN,
     EcuIdentity,
     validate_vin,
@@ -105,22 +105,22 @@ def _load_identity(raw: dict) -> EcuIdentity:
     else:
         sa = int(sa)
 
-    name = ecu.get("name", DEFAULT_NAME)
-    if isinstance(name, str):
-        name = int(name, 0)
-    else:
-        name = int(name)
+    # NAME: either a full 64-bit `name`, or individual J1939-81 fields (which win if both given).
+    fields: dict[str, int] = {}
+    if "name" in ecu:
+        fields.update(EcuIdentity.name_fields(_int(ecu["name"])))
+    for key in NAME_FIELDS:
+        if key in ecu:
+            fields[key] = _int(ecu[key])
+    if "vehicle_system" not in ecu and "vehicle_system" in vehicle:
+        fields["vehicle_system"] = _int(vehicle["vehicle_system"])
 
-    industry = int(ecu.get("industry_group", 0))
-    vehicle_system = int(ecu.get("vehicle_system", vehicle.get("vehicle_system", 0)))
+    return EcuIdentity(vin=vin, source_address=sa & 0xFF, **fields)
 
-    return EcuIdentity(
-        vin=vin,
-        source_address=sa & 0xFF,
-        name=name,
-        industry_group=industry,
-        vehicle_system=vehicle_system,
-    )
+
+def _int(value: object) -> int:
+    """TOML ints, or strings like "0x20" / "32"."""
+    return int(value, 0) if isinstance(value, str) else int(value)
 
 
 def _load_diagnostics(raw: dict) -> DiagnosticState:

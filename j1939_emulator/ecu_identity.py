@@ -6,12 +6,27 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
+from j1939 import Name
+
 # Defaults
 DEFAULT_VIN = "1HTMMAAL7GH123456"
 DEFAULT_SOURCE_ADDRESS = 0x00
-DEFAULT_NAME = 0x0020000000000000
-DEFAULT_INDUSTRY_GROUP = 0
-DEFAULT_VEHICLE_SYSTEM = 0
+DEFAULT_INDUSTRY_GROUP = 1  # On-Highway Equipment
+DEFAULT_VEHICLE_SYSTEM = 0  # Non-specific
+DEFAULT_FUNCTION = 0  # Engine
+
+# J1939-81 NAME fields with their bit widths, in the order j1939.Name takes them.
+NAME_FIELDS = {
+    "arbitrary_address_capable": 1,
+    "industry_group": 3,
+    "vehicle_system_instance": 4,
+    "vehicle_system": 7,
+    "function": 8,
+    "function_instance": 5,
+    "ecu_instance": 3,
+    "manufacturer_code": 11,
+    "identity_number": 21,
+}
 
 # PGN 65260 Vehicle Identification (VI) — PDU format/specific for send_pgn
 PGN_VI = 65260  # 0xFEEC
@@ -42,17 +57,38 @@ def validate_vin(vin: str, *, allow_empty: bool = False) -> str:
 
 @dataclass
 class EcuIdentity:
-    """Single ECU node identity."""
+    """Single ECU node identity. The 64-bit NAME is built from the J1939-81 fields."""
 
     vin: str = DEFAULT_VIN
     source_address: int = DEFAULT_SOURCE_ADDRESS
-    name: int = DEFAULT_NAME
+    arbitrary_address_capable: int = 0
     industry_group: int = DEFAULT_INDUSTRY_GROUP
+    vehicle_system_instance: int = 0
     vehicle_system: int = DEFAULT_VEHICLE_SYSTEM
+    function: int = DEFAULT_FUNCTION
+    function_instance: int = 0
+    ecu_instance: int = 0
+    manufacturer_code: int = 0
+    identity_number: int = 0
     _listeners: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         self.vin = validate_vin(self.vin)
+        for key, bits in NAME_FIELDS.items():
+            value = int(getattr(self, key))
+            if not 0 <= value < (1 << bits):
+                raise ValueError(f"NAME field {key}={value} out of range 0..{(1 << bits) - 1}")
+            setattr(self, key, value)
+
+    @staticmethod
+    def name_fields(name: int) -> dict[str, int]:
+        """Split a 64-bit NAME into its J1939-81 fields."""
+        decoded = Name(value=int(name))
+        return {key: int(getattr(decoded, key)) for key in NAME_FIELDS}
+
+    @property
+    def name(self) -> int:
+        return int(Name(**{key: getattr(self, key) for key in NAME_FIELDS}).value)
 
     def on_change(self, cb: Callable[[], None]) -> None:
         self._listeners.append(cb)

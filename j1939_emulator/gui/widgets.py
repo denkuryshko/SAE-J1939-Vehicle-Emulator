@@ -286,6 +286,8 @@ _INDUSTRY_GROUPS = {
     4: "Marine",
     5: "Industrial / Process",
 }
+# Vehicle systems defined for industry group 1 (On-Highway)
+_ON_HIGHWAY_VEHICLE_SYSTEMS = {0: "Non-specific", 1: "Tractor", 2: "Trailer"}
 
 
 def build_ecu_pane(session, refs: dict[str, Any]) -> None:
@@ -294,6 +296,12 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
     sa = f"0x{identity.source_address:02X}"
     sa_role = " (Engine #1)" if identity.source_address == 0x00 else ""
     industry = _INDUSTRY_GROUPS.get(identity.industry_group, "Reserved")
+    function = " (Engine)" if identity.function == 0 else ""
+    vehicle_system = (
+        f" ({_ON_HIGHWAY_VEHICLE_SYSTEMS[identity.vehicle_system]})"
+        if identity.industry_group == 1 and identity.vehicle_system in _ON_HIGHWAY_VEHICLE_SYSTEMS
+        else ""
+    )
 
     with ui.element("div").classes("card").style(
         "display:flex;flex-direction:column;gap:16px;"
@@ -393,7 +401,10 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         for key, label, value in (
                             ("sa", "Source Address (SA):", f"{sa}{sa_role}"),
                             ("industry", "Industry Group:", f"{identity.industry_group} ({industry})"),
-                            ("vehicle_system", "Vehicle System:", str(identity.vehicle_system)),
+                            ("vehicle_system", "Vehicle System:", f"{identity.vehicle_system}{vehicle_system}"),
+                            ("function", "Function:", f"{identity.function}{function}"),
+                            ("manufacturer", "Manufacturer Code:", str(identity.manufacturer_code)),
+                            ("identity", "Identity Number:", str(identity.identity_number)),
                             ("bitrate", "Bitrate:", f"{session.bitrate // 1000} kbit/s"),
                         ):
                             with ui.element("div").style(
