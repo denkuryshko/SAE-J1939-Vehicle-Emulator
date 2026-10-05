@@ -3,7 +3,7 @@
 
 [bus]
 mode = "real"
-channel = "1"             # номер адаптера з: --list-channels --mode real
+channel = "003A002B5946570920393630:0"   # candleLight за серійним номером (не залежить від порядку адаптерів)
 bitrate = 250000
 start_on_launch = false   # START натискаєте самі в GUI
 

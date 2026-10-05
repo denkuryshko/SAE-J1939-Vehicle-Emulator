@@ -80,6 +80,9 @@ class GuiState:
         self.open_browser = True
         # CLI overrides (--mode/--channel/--bitrate), carried over on Apply Port relaunch.
         self.cli_overrides: dict[str, Any] = {}
+        # Channel named in the config / --channel. While set, never silently fall back to
+        # another adapter (e.g. a COM port) when it is missing; cleared by a manual choice.
+        self.pinned_channel: str | None = None
         self._relaunch: dict[str, Any] | None = None
 
 
@@ -144,11 +147,11 @@ def run_gui(
     @app.on_startup
     def _startup() -> None:
         state.channels = detect_hardware(mode=state.mode, timeout=6.0)
+        state.pinned_channel = preferred_channel
         if preferred_channel:
             ch = match_channel(state.channels, preferred_channel)
-            if ch is not None:
-                state.channel_uid = ch.uid
-        if state.channel_uid is None and state.channels:
+            state.channel_uid = ch.uid if ch is not None else None
+        elif state.channels:
             state.channel_uid = state.channels[0].uid
         if state.open_browser:
             url = f"http://{state.host}:{state.port}/"
@@ -166,7 +169,7 @@ def run_gui(
     @ui.page("/")
     def index_page() -> None:
         ui.add_css(APP_CSS)
-        _build_page(state, preferred_channel)
+        _build_page(state)
 
     ui.run(
         host=host,
@@ -225,7 +228,7 @@ def _bitrate_label(bitrate: int) -> str:
     return f"{bitrate} bit/s"
 
 
-def _build_page(state: GuiState, preferred_channel: str | None) -> None:
+def _build_page(state: GuiState) -> None:
     session = state.session
     sig = session.signals
 
@@ -383,13 +386,19 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
         state.channels = detect_hardware(mode=state.mode, timeout=6.0)
         options = {ch.uid: ch.label for ch in state.channels}
         channel_select.options = options
-        if preferred_channel and state.channel_uid is None:
-            ch = match_channel(state.channels, preferred_channel)
-            if ch is not None:
-                state.channel_uid = ch.uid
-        resolved = resolve_channel(
-            state.channels, uid=state.channel_uid, previous=prior
-        )
+        if state.pinned_channel:
+            resolved = match_channel(state.channels, state.pinned_channel)
+            if resolved is None:
+                ui.notify(
+                    f"Configured channel {state.pinned_channel!r} not found. "
+                    "Connect the adapter and press Refresh, or pick a channel.",
+                    type="warning",
+                    timeout=10000,
+                )
+        else:
+            resolved = resolve_channel(
+                state.channels, uid=state.channel_uid, previous=prior
+            )
         state.channel_uid = resolved.uid if resolved else None
         channel_select.value = state.channel_uid
         channel_select.update()
@@ -405,10 +414,15 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
             update_chrome()
         state.mode = new_mode
         state.channel_uid = None
+        state.pinned_channel = None
         refresh_channels()
 
     def on_channel_change(e) -> None:
         state.channel_uid = e.value if hasattr(e, "value") else channel_select.value
+        if state.channel_uid is not None and state.pinned_channel:
+            pinned = match_channel(state.channels, state.pinned_channel)
+            if pinned is None or pinned.uid != state.channel_uid:
+                state.pinned_channel = None  # the user picked a different adapter
 
     def on_bitrate_change(e) -> None:
         label = e.value if hasattr(e, "value") else bitrate_select.value

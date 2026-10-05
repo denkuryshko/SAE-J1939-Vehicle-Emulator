@@ -163,7 +163,9 @@ The default browser opens at `http://127.0.0.1:8080`. To start from a config fil
 python -m j1939_emulator --gui --config my_ecu.toml
 ```
 
-**Windows shortcut:** double-click `run_gui.bat`. It lists the detected CAN adapters, then opens the GUI with `my_ecu.toml`. Make sure `[bus] channel` in `my_ecu.toml` matches the adapter number it prints.
+### Windows: `run_gui.bat` (recommended)
+
+Double-click `run_gui.bat` (or put a shortcut to it on the desktop). It opens the GUI with `my_ecu.toml`. On the first run, when there is no `.venv` yet, it finds Python 3.11+, creates `.venv` and installs everything including the candleLight driver, which takes about a minute. Keep the console window open while you work and stop with **QUIT** in the GUI, so meters are saved and the adapter is released.
 
 Other options: `--host` / `--port` to change the address, `--no-browser` to skip auto-open. You can also change **Host** / **Port** in the top bar and click **Apply** (the UI restarts). **QUIT** stops the server.
 
@@ -230,6 +232,8 @@ Available Real CAN channels (3):
   3   serial  ch=COM8
 ```
 
+A list number depends on which adapters are plugged in (unplug the candleLight and `1` becomes a COM port). For a fixed setup, put the adapter's own channel string in the config instead. For candleLight that is its serial number, e.g. `channel = "003A002B5946570920393630:0"`. If the configured adapter is missing, the GUI selects nothing and warns, instead of falling back to another device.
+
 For Virtual mode you can also use the names `vcan0`, `vcan1`, `vcan2`. Use `--no-start` to open the prompt without starting emulation.
 
 ### Commands at the `>` prompt
@@ -266,7 +270,7 @@ See [`examples/ecu.toml`](examples/ecu.toml) (Virtual) and [`my_ecu.toml`](my_ec
 ```toml
 [bus]
 mode = "virtual"          # "real" | "virtual"
-channel = "vcan0"         # adapter number from --list-channels, or vcan0/1/2
+channel = "vcan0"         # vcan0/1/2, a list number from --list-channels, or e.g. "<candleLight serial>:0"
 bitrate = 500000          # 125000 | 250000 | 500000 | 1000000
 start_on_launch = true    # CLI: start immediately
 
