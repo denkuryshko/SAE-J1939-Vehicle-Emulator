@@ -269,7 +269,7 @@ def build_ccvs(sig: SignalState, payload_labels: dict, containers: dict) -> None
         slider_spn(
             "SPN 84", "Wheel-Based Vehicle Speed", "mph", sig.spn84_speed_mph, 0, 120, 0.5,
             _bind(sig, "spn84_speed_mph"),
-            presets=[("0 mph", 0), ("35 mph", 35), ("65 mph", 65)],
+            presets=[("0 mph", 0), ("5 mph", 5), ("35 mph", 35), ("65 mph", 65)],
             decimals=1,
         )
 
