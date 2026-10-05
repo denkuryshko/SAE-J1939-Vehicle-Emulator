@@ -16,6 +16,7 @@ from j1939_emulator.bus.detect import (
 )
 from j1939_emulator.bus.session import EmulatorSession
 from j1939_emulator.config import load_config
+from j1939_emulator.meters_store import restore_meters
 from j1939_emulator.pgn import all_payloads
 
 
@@ -129,7 +130,7 @@ channel [N]              — show current channel or select by number (e.g. chan
 mode [real|virtual]      — show or set emulation mode
 bitrate [Hz]             — show or set bitrate (125000|250000|500000|1000000)
 info                     — dump runtime config (script/cloud friendly)
-status                   — uptime / TX / load / claim / DTCs
+status                   — uptime / TX / load / claim / DTCs / bus health / other nodes
 payloads                 — current PGN hex
 get <key>                — read SPN (e.g. get eec1.spn190_rpm)
 set <key> <value>        — change SPN (e.g. set eec1.spn190_rpm 2100)
@@ -195,6 +196,7 @@ def run_cli(args: argparse.Namespace) -> int:
         channel_name = cfg.bus.channel
         bitrate = cfg.bus.bitrate
         start = cfg.start_on_launch and not args.no_start
+        persist_meters = cfg.persist_meters
     else:
         from j1939_emulator.diagnostics import DiagnosticState
         from j1939_emulator.ecu_identity import EcuIdentity
@@ -207,6 +209,13 @@ def run_cli(args: argparse.Namespace) -> int:
         channel_name = args.channel or "vcan0"
         bitrate = args.bitrate or 500_000
         start = not args.no_start
+        persist_meters = True
+
+    if persist_meters and restore_meters(signals, identity.vin):
+        print(
+            f"restored meters for {identity.vin}: "
+            f"odometer={signals.spn245_total_mi:.1f} mi engine_hours={signals.spn247_engine_hours:.2f} h"
+        )
 
     if args.mode:
         mode = EmulationMode(args.mode)
@@ -236,6 +245,7 @@ def run_cli(args: argparse.Namespace) -> int:
         diagnostics=diagnostics,
         bitrate=bitrate,
         mode=mode,
+        persist_meters=persist_meters,
     )
     print(
         f"j1939-emulator {__version__}  mode={mode.value} "
@@ -407,7 +417,9 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"dtc1={session.diagnostics.dtc_spn110_fmi3}\n"
                     f"dtc2={session.diagnostics.dtc_spn190_fmi0}\n"
                     f"tx={st.tx_count}\n"
-                    f"load_pct={st.load_pct:.1f}"
+                    f"load_pct={st.load_pct:.1f}\n"
+                    f"bus={st.bus_health.value}\n"
+                    f"peers={st.peers}"
                 )
                 continue
             if cmd == "status":
@@ -418,7 +430,8 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"running={st.running} claimed={st.address_claimed} "
                     f"uptime={mm:02d}:{ss:02d} tx={st.tx_count} "
                     f"load={st.load_pct:.1f}% bitrate={st.bitrate} "
-                    f"dtcs={st.active_dtcs} vin={session.identity.vin} "
+                    f"dtcs={st.active_dtcs} bus={st.bus_health.value} peers={st.peers} "
+                    f"vin={session.identity.vin} "
                     f"channel={channel.label!r}"
                 )
                 continue

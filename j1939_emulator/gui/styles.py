@@ -53,6 +53,8 @@ body, .nicegui-content {
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-pill.stopped .status-dot { background: #94A3B8; }
 .status-pill.running .status-dot { background: #1F9D55; }
+.status-pill.warn { background: #FFFBEB; color: #B45309; border: 1px solid #FDE68A; }
+.status-pill.warn .status-dot { background: #D97706; }
 
 .j1939-main {
   flex: 1; max-width: 1280px; width: 100%; margin: 0 auto; padding: 14px;

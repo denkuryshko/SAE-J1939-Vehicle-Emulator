@@ -33,6 +33,7 @@ class AppConfig:
     diagnostics: DiagnosticState
     vin: str = DEFAULT_VIN  # alias of identity.vin for back-compat
     start_on_launch: bool = True
+    persist_meters: bool = True
 
 
 _REQUIRED_SECTIONS = ("bus",)
@@ -89,6 +90,7 @@ def load_config(path: str | Path) -> AppConfig:
         diagnostics=diagnostics,
         vin=identity.vin,
         start_on_launch=start_on_launch,
+        persist_meters=bool((raw.get("vehicle", {}) or {}).get("persist_meters", True)),
     )
 
 

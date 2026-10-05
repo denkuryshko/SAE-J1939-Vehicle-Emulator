@@ -20,8 +20,9 @@ from j1939_emulator.bus.detect import (
     match_channel,
     resolve_channel,
 )
-from j1939_emulator.bus.session import EmulatorSession
+from j1939_emulator.bus.session import BusHealth, EmulatorSession
 from j1939_emulator.config import load_config
+from j1939_emulator.meters_store import restore_meters
 from j1939_emulator.gui.styles import APP_CSS
 from j1939_emulator.gui.widgets import (
     build_ccvs,
@@ -40,6 +41,23 @@ BITRATE_OPTIONS = {
     "250 kbit/s (Traditional / Common)": 250_000,
     "500 kbit/s (J1939 / Modern)": 500_000,
     "1000 kbit/s (FD)": 1_000_000,
+}
+
+# Status pill text and the one-time hint shown when the bus goes unhealthy.
+BUS_HEALTH_TEXT = {
+    BusHealth.NO_ACK: (
+        "RUNNING · NO ACK",
+        "No node acknowledges our frames. Check CAN-H/CAN-L wiring and 120 Ω termination "
+        "(~60 Ω between H and L). A listen-only ELD never ACKs — add a second node in normal mode.",
+    ),
+    BusHealth.TX_FAILING: (
+        "RUNNING · TX FAILING",
+        "The adapter is not sending frames (TX timeouts). Check the adapter, cable and bitrate.",
+    ),
+    BusHealth.BUS_ERRORS: (
+        "RUNNING · BUS ERRORS",
+        "Error frames on the bus. Check that every node uses the same bitrate and the wiring/termination.",
+    ),
 }
 
 MODE_OPTIONS = {
@@ -80,6 +98,7 @@ def run_gui(
     bitrate = 500_000
     mode = EmulationMode.VIRTUAL
     preferred_channel: str | None = None
+    persist_meters = True
 
     if config_path:
         cfg = load_config(config_path)
@@ -89,6 +108,10 @@ def run_gui(
         bitrate = cfg.bus.bitrate
         mode = cfg.bus.mode
         preferred_channel = cfg.bus.channel
+        persist_meters = cfg.persist_meters
+
+    if persist_meters:
+        restore_meters(signals, identity.vin)
 
     if mode_override:
         mode = EmulationMode(mode_override)
@@ -103,6 +126,7 @@ def run_gui(
         diagnostics=diagnostics,
         bitrate=bitrate,
         mode=mode,
+        persist_meters=persist_meters,
     )
     state = GuiState(session)
     state.mode = mode
@@ -346,6 +370,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 foot_sa = ui.label(f"SA: 0x{session.identity.source_address:02X}")
                 foot_bitrate = ui.label(f"{state.bitrate // 1000} kbit/s")
             with ui.row().classes("items-center gap-3 font-mono"):
+                foot_peers = ui.label("Other nodes: 0")
                 foot_tx = ui.label("TX Broadcast: 0 frames")
                 foot_dtc = ui.label("Active Faults: 0 DTCs").style("color:#1F9D55")
                 state.ui_refs["foot_dtc"] = foot_dtc
@@ -534,20 +559,32 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
             if key == name:
                 btn.classes(add="active")
 
+    last_health = [BusHealth.OK]
+
     def update_chrome() -> None:
         st = session.stats()
         if st.running:
-            top_pill.classes(remove="stopped", add="running")
-            top_status.set_text("EMULATING · RUNNING")
+            health_text = BUS_HEALTH_TEXT.get(st.bus_health)
+            if health_text is None:
+                top_pill.classes(remove="stopped warn", add="running")
+                top_status.set_text("EMULATING · RUNNING")
+            else:
+                top_pill.classes(remove="stopped running", add="warn")
+                top_status.set_text(health_text[0])
+                if st.bus_health is not last_health[0]:
+                    ui.notify(health_text[1], type="warning", timeout=15000, close_button=True)
+            last_health[0] = st.bus_health
             foot_status.set_text("● ECU Emulating")
             btn_start.disable()
             btn_stop.enable()
         else:
-            top_pill.classes(remove="running", add="stopped")
+            last_health[0] = BusHealth.OK
+            top_pill.classes(remove="running warn", add="stopped")
             top_status.set_text("ECU STOPPED")
             foot_status.set_text("● ECU STOPPED")
             btn_start.enable()
             btn_stop.disable()
+        foot_peers.set_text(f"Other nodes: {st.peers}")
         claim_chip = state.ui_refs.get("claim_chip")
         claim_label = state.ui_refs.get("claim_label")
         if claim_chip is not None and claim_label is not None:

@@ -38,7 +38,9 @@ While the ECU is running (after **START**):
 - **Engine hours** (SPN 247) increase in real time whenever Engine Speed > 0 rpm.
 - **Odometer** (total distance) increases by `vehicle speed × elapsed time`. For example, 60 mph for one minute adds 1 mile.
 
-Both stop counting at 0 rpm / 0 mph and after **STOP**. You can set either value by hand at any time, and counting continues from the new value. Accumulated values are not saved between runs; each launch starts from the config or the defaults.
+Both stop counting at 0 rpm / 0 mph and after **STOP**. You can set either value by hand at any time, and counting continues from the new value.
+
+**Saved between runs.** Odometer and engine hours are stored per VIN (every 10 s while running, and on STOP / QUIT) and restored at the next launch, so each emulated truck keeps its own mileage. The saved values take priority over the config file; set a new value in the GUI or with `set` to change them. The file is `%APPDATA%\j1939-emulator\meters.json` on Windows and `~/.local/state/j1939-emulator/meters.json` on Linux/macOS. Turn this off with `persist_meters = false` under `[vehicle]`.
 
 The CAN frames change in J1939 resolution steps: 0.05 h (3 minutes) for engine hours and 0.125 km (about 0.078 mi) for distance.
 
@@ -175,6 +177,21 @@ Other options: `--host` / `--port` to change the address, `--no-browser` to skip
 6. **Diagnostics** tab: inject or clear the two DTCs (sent on DM1 while running).
 7. Click **QUIT** when finished.
 
+### Bus health indicator
+
+While running, the status pill in the top bar watches the bus:
+
+| Pill | Meaning |
+|------|---------|
+| **EMULATING · RUNNING** (green) | Frames are going out normally |
+| **RUNNING · NO ACK** (amber) | Nobody acknowledges our frames: wiring, termination, or only listen-only nodes on the bus (see the [bench wiring checklist](#bench-wiring-checklist)) |
+| **RUNNING · TX FAILING** (amber) | The adapter is not sending (TX timeouts) |
+| **RUNNING · BUS ERRORS** (amber) | Error frames on the bus, e.g. a bitrate mismatch |
+
+The footer shows **Other nodes**: how many other source addresses were heard on the bus in the last 3 seconds. A listen-only ELD does not transmit, so it is normal for this to stay at 0. The CLI `status` / `info` commands print the same as `bus=` and `peers=`.
+
+NO ACK detection needs an adapter that reports error frames (candleLight / gs_usb, SocketCAN). Other adapters still show TX FAILING when sends time out.
+
 ### Bus modes
 
 | Mode | Channels | Hardware |
@@ -265,6 +282,7 @@ identity_number = 0
 
 [vehicle]
 vin = "1HTMMAAL7GH123456"
+persist_meters = true    # keep odometer / engine hours per VIN between runs
 
 [diagnostics]
 dtc_spn110_fmi3 = false   # SPN 110 / FMI 3: amber warning
@@ -299,11 +317,23 @@ Every `[pgn.*]` section is optional; missing values use the defaults from the ta
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
-| ELD sees nothing; GUI still shows RUNNING | No node ACKs the frames. See the [bench wiring checklist](#bench-wiring-checklist): termination, a third ACKing node, H/L wiring, bitrate. |
+| Status pill shows **NO ACK** / ELD sees nothing | No node ACKs the frames. See the [bench wiring checklist](#bench-wiring-checklist): termination, a third ACKing node, H/L wiring, bitrate. |
+| Odometer / engine hours start from an old value | They are restored per VIN from `meters.json`. Set a new value in the GUI, or use `persist_meters = false`. |
 | ELD sees engine data but no VIN | The ELD must be able to receive multi-packet BAM (PGN 60416 / 60160). VIN is broadcast on START and on **Set**, and sent again whenever the ELD requests PGN 65260. |
 | `START failed` / `Cannot open device` | Another program holds the adapter, or the USB device has not been released yet. Close other CAN tools, wait a second and press START again. |
 | Port 8080 already in use | `python -m j1939_emulator --gui --port 8090` |
 | Adapter not listed | Check the vendor driver and USB cable, then click **Refresh** (GUI) or run `channels real` (CLI). |
+
+---
+
+## Tests
+
+```bash
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+The tests cover PGN / VIN / DM1 / NAME encoding, config loading and meter persistence, and run the emulator end to end on python-can's virtual bus against a fake ELD node (requests, NACK, DM1, bus health). No CAN hardware is needed.
 
 ---
 

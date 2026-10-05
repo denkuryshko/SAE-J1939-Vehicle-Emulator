@@ -6,6 +6,7 @@ import heapq
 import threading
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable
 
 import can
@@ -38,6 +39,7 @@ from j1939_emulator.ecu_identity import (
     VI_PRIORITY,
     EcuIdentity,
 )
+from j1939_emulator.meters_store import save_meters
 from j1939_emulator.pgn import (
     CAN_ID_CCVS,
     CAN_ID_EEC1,
@@ -52,6 +54,7 @@ from j1939_emulator.pgn import (
 
 _BITS_PER_FRAME = 142
 _METER_TICK_S = 0.2
+_METER_SAVE_S = 10.0
 
 _GLOBAL_ADDRESS = 0xFF
 # Acknowledgement PGN 59392 (0xE800)
@@ -111,6 +114,13 @@ def _force_release_bus(bus: can.BusABC | None) -> None:
         pass
 
 
+class BusHealth(str, Enum):
+    OK = "OK"
+    NO_ACK = "NO_ACK"  # nobody acknowledges our frames (wiring, termination, listen-only peers)
+    TX_FAILING = "TX_FAILING"  # the adapter refuses / times out sends
+    BUS_ERRORS = "BUS_ERRORS"  # other error frames (bit/stuff/form errors, error-passive …)
+
+
 @dataclass
 class SessionStats:
     running: bool = False
@@ -123,6 +133,8 @@ class SessionStats:
     sa: int = 0x00
     active_dtcs: int = 0
     address_claimed: bool = False
+    bus_health: BusHealth = BusHealth.OK
+    peers: int = 0
 
 
 @dataclass(order=True)
@@ -143,6 +155,55 @@ class _SchedEntry:
     next_t: float = 0.0
 
 
+# SocketCAN-style error class bits in an error frame's arbitration_id (candle / gs_usb, socketcan …)
+_CAN_ERR_ACK = 0x20
+_HEALTH_WINDOW_S = 3.0
+
+
+class _BusHealthMonitor(can.Listener):
+    """Watches error frames, send failures and other nodes' traffic on the bus."""
+
+    def __init__(self, own_sa: int) -> None:
+        self._own_sa = own_sa & 0xFF
+        self._lock = threading.Lock()
+        self._last_ack_error = -1e9
+        self._last_error = -1e9
+        self._last_tx_fail = -1e9
+        self._peers: dict[int, float] = {}
+
+    def on_message_received(self, msg: can.Message) -> None:
+        now = time.monotonic()
+        with self._lock:
+            if msg.is_error_frame:
+                self._last_error = now
+                if msg.arbitration_id & _CAN_ERR_ACK:
+                    self._last_ack_error = now
+                return
+            if not msg.is_rx or not msg.is_extended_id:
+                return  # our own TX echo, or not J1939
+            sa = msg.arbitration_id & 0xFF
+            if sa != self._own_sa:
+                self._peers[sa] = now
+
+    def tx_failed(self) -> None:
+        with self._lock:
+            self._last_tx_fail = time.monotonic()
+
+    def snapshot(self) -> tuple[BusHealth, int]:
+        """(health, number of other nodes heard in the last few seconds)."""
+        now = time.monotonic()
+        cutoff = now - _HEALTH_WINDOW_S
+        with self._lock:
+            peers = sum(1 for t in self._peers.values() if t >= cutoff)
+            if self._last_ack_error >= cutoff:
+                return BusHealth.NO_ACK, peers
+            if self._last_tx_fail >= cutoff:
+                return BusHealth.TX_FAILING, peers
+            if self._last_error >= cutoff:
+                return BusHealth.BUS_ERRORS, peers
+            return BusHealth.OK, peers
+
+
 class _PgnScheduler(threading.Thread):
     """Single worker: heap of next-fire times (scales beyond a few PGNs)."""
 
@@ -151,10 +212,12 @@ class _PgnScheduler(threading.Thread):
         bus: can.BusABC,
         entries: list[tuple[int, Callable[[], float], Callable[[], bytes]]],
         on_tx: Callable[[], None],
+        on_tx_fail: Callable[[], None],
     ) -> None:
         super().__init__(daemon=True, name="pgn-scheduler")
         self._bus = bus
         self._on_tx = on_tx
+        self._on_tx_fail = on_tx_fail
         self._stop_event = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
@@ -281,6 +344,7 @@ class _PgnScheduler(threading.Thread):
                     except Exception:
                         if self._stop_event.is_set():
                             break
+                        self._on_tx_fail()
                     now = time.monotonic()
                     with self._lock:
                         entry.last_t = now
@@ -294,9 +358,10 @@ class _PgnScheduler(threading.Thread):
 class _MeterThread(threading.Thread):
     """Advances engine hours and odometer in real time while the session runs."""
 
-    def __init__(self, signals: SignalState) -> None:
+    def __init__(self, signals: SignalState, on_save: Callable[[], None] | None = None) -> None:
         super().__init__(name="j1939-meters", daemon=True)
         self._signals = signals
+        self._on_save = on_save
         self._stop_event = threading.Event()
 
     def stop(self) -> None:
@@ -304,10 +369,14 @@ class _MeterThread(threading.Thread):
 
     def run(self) -> None:
         last = time.monotonic()
+        last_save = last
         while not self._stop_event.wait(_METER_TICK_S):
             now = time.monotonic()
             self._signals.advance_meters(now - last)
             last = now
+            if self._on_save is not None and now - last_save >= _METER_SAVE_S:
+                self._on_save()
+                last_save = now
         self._signals.advance_meters(time.monotonic() - last)
 
 
@@ -320,6 +389,8 @@ class EmulatorSession:
     diagnostics: DiagnosticState = field(default_factory=DiagnosticState)
     bitrate: int = 500_000
     mode: EmulationMode = EmulationMode.VIRTUAL
+    # Save odometer / engine hours per VIN between runs (see meters_store).
+    persist_meters: bool = False
 
     _bus: can.BusABC | None = field(default=None, init=False, repr=False)
     _ecu: ElectronicControlUnit | None = field(default=None, init=False, repr=False)
@@ -339,6 +410,7 @@ class EmulatorSession:
         default=None, init=False, repr=False
     )
     _meters: _MeterThread | None = field(default=None, init=False, repr=False)
+    _health: _BusHealthMonitor | None = field(default=None, init=False, repr=False)
 
     @property
     def running(self) -> bool:
@@ -365,6 +437,11 @@ class EmulatorSession:
                 tx_count = self._tx_count
                 load = 0.0 if not self._running else self._load_pct
             label = self._channel.label if self._channel else ""
+            health, peers = (
+                self._health.snapshot()
+                if self._running and self._health is not None
+                else (BusHealth.OK, 0)
+            )
             return SessionStats(
                 running=self._running,
                 uptime_s=uptime,
@@ -376,6 +453,8 @@ class EmulatorSession:
                 sa=self.identity.source_address & 0xFF,
                 active_dtcs=self.diagnostics.active_count,
                 address_claimed=self.address_claimed if self._running else False,
+                bus_health=health,
+                peers=peers,
             )
 
     def start(self, channel: DetectedChannel, bitrate: int | None = None) -> None:
@@ -393,6 +472,12 @@ class EmulatorSession:
     def stop(self) -> None:
         with self._lock:
             self._stop_locked()
+        # Also covers values set by hand while stopped (GUI QUIT / CLI quit call stop()).
+        self.save_meters()
+
+    def save_meters(self) -> None:
+        if self.persist_meters:
+            save_meters(self.signals, self.identity.vin)
 
     def reset(self, channel: DetectedChannel | None = None, bitrate: int | None = None) -> None:
         with self._lock:
@@ -469,6 +554,9 @@ class EmulatorSession:
             self._ecu = None
             self._bus = None
             raise
+        self._health = _BusHealthMonitor(self.identity.source_address)
+        # can-j1939 owns the bus Notifier; piggyback on it to see error frames and peer traffic.
+        self._ecu._notifier.add_listener(self._health)
 
         name = Name(value=int(self.identity.name))
         self._ca = ControllerApplication(
@@ -492,7 +580,7 @@ class EmulatorSession:
         self._frozen_uptime = 0.0
         self._running = True
         self._start_scheduler_locked()
-        self._meters = _MeterThread(self.signals)
+        self._meters = _MeterThread(self.signals, self.save_meters if self.persist_meters else None)
         self._meters.start()
         self._broadcast_vin_locked()
         # DM1 goes out every second even with no faults (J1939-73), so an ELD sees faults clear.
@@ -668,7 +756,7 @@ class EmulatorSession:
             for enabled, arb_id, period_fn, data_fn in specs
             if enabled
         ]
-        sched = _PgnScheduler(self._bus, entries, self._on_tx)
+        sched = _PgnScheduler(self._bus, entries, self._on_tx, self._health.tx_failed)
         self._scheduler = sched
         sched.start()
 

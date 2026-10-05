@@ -15,6 +15,7 @@ identity_number = 0
 
 [vehicle]
 vin = "1HTMMAAL7GH123456"
+persist_meters = true    # keep odometer / engine hours per VIN between runs
 
 [diagnostics]
 dtc_spn110_fmi3 = false
