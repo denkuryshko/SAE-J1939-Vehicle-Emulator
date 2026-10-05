@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-# Milestone / HTML defaults
+# Defaults
 DEFAULT_VIN = "1HTMMAAL7GH123456"
 DEFAULT_SOURCE_ADDRESS = 0x00
 DEFAULT_NAME = 0x0020000000000000
@@ -18,9 +18,6 @@ PGN_VI = 65260  # 0xFEEC
 VI_PDU_FORMAT = 0xFE
 VI_PDU_SPECIFIC = 0xEC
 VI_PRIORITY = 6
-
-# Address claimed (broadcast) — observed on bus as 0x18EEFF00 for SA 0x00
-CAN_ID_ADDRESS_CLAIMED = 0x18EEFF00
 
 _VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{1,17}$")
 
@@ -43,14 +40,9 @@ def validate_vin(vin: str, *, allow_empty: bool = False) -> str:
     return cleaned
 
 
-def name_bytes_le(name: int = DEFAULT_NAME) -> bytes:
-    """Little-endian 8-byte NAME as transmitted in Address Claimed."""
-    return int(name).to_bytes(8, byteorder="little", signed=False)
-
-
 @dataclass
 class EcuIdentity:
-    """Single v1.0 ECU node identity."""
+    """Single ECU node identity."""
 
     vin: str = DEFAULT_VIN
     source_address: int = DEFAULT_SOURCE_ADDRESS

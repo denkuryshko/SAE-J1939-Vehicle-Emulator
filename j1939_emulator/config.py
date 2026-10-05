@@ -159,8 +159,10 @@ def _apply_pgn(signals: SignalState, section: dict | None, name: str) -> None:
             signals.cycle_ccvs_ms = int(section["cycle_ms"])
     elif name == "vd":
         signals.vd_enabled = enabled
-        if "spn917_total_mi" in section:
-            signals.spn917_total_mi = float(section["spn917_total_mi"])
+        # spn917_total_mi: pre-2.0 key name, still accepted
+        for key in ("spn917_total_mi", "spn245_total_mi"):
+            if key in section:
+                signals.spn245_total_mi = float(section[key])
         if "cycle_ms" in section:
             signals.cycle_vd_ms = int(section["cycle_ms"])
     elif name == "hours":

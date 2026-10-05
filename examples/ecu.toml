@@ -30,7 +30,7 @@ spn84_speed_mph = 0
 [pgn.vd]
 enabled = true
 cycle_ms = 1000
-spn917_total_mi = 248912.4
+spn245_total_mi = 248912.4
 
 [pgn.hours]
 enabled = true

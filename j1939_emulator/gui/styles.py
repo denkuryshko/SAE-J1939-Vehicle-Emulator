@@ -1,4 +1,4 @@
-"""CSS from ImplementationPlan/standalone_v1.0.html for NiceGUI."""
+"""Application CSS for the NiceGUI pages."""
 
 APP_CSS = """
 *, *::before, *::after { box-sizing: border-box; }
@@ -152,12 +152,10 @@ body, .nicegui-content {
 .signal-name { font-weight: 600; }
 .signal-val { color: #1F2A37; }
 .range-row { display: flex; align-items: center; gap: 10px; }
-.preset-btn, .toggle-btn {
+.preset-btn {
   font-size: 10px; padding: 2px 8px; border-radius: 3px; border: 1px solid #CBD5E1;
   background: #FFFFFF; color: #475569; cursor: pointer; font-family: inherit;
 }
-.toggle-btn.active { background: #1F6FEB; color: #FFFFFF; border-color: #1F6FEB; }
-.toggle-btn.off-active { background: #64748B; color: #FFFFFF; border-color: #64748B; }
 
 .j1939-footer {
   height: 26px; background: #E2E7ED; border-top: 1px solid #C5CCD6; padding: 0 14px;

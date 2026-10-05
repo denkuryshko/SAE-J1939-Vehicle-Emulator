@@ -8,18 +8,19 @@ from typing import Callable
 from j1939.diagnostic_messages import DTC, DtcLamp
 
 # PGN 65226 DM1 — CAN ID 0x18FECA00 (Prio 6, SA 0x00)
-PGN_DM1 = 65226  # 0xFECA
-CAN_ID_DM1 = 0x18FECA00
+DM1_PDU_FORMAT = 0xFE
+DM1_PDU_SPECIFIC = 0xCA
+DM1_PRIORITY = 6
 DM1_CYCLE_MS = 1000
 
-# Fixed v1.0 fault set
+# Fixed fault set
 DTC1_SPN, DTC1_FMI = 110, 3  # Coolant temp voltage high → Amber Warning
 DTC2_SPN, DTC2_FMI = 190, 0  # Crankshaft overspeed → Red Stop
 
 
 @dataclass
 class DiagnosticState:
-    """Exactly two injectable DTCs for v1.0."""
+    """Exactly two injectable DTCs."""
 
     dtc_spn110_fmi3: bool = False
     dtc_spn190_fmi0: bool = False
@@ -75,38 +76,19 @@ class DiagnosticState:
             out.append({"spn": DTC2_SPN, "fmi": DTC2_FMI, "oc": 1})
         return out
 
-    def dm1_callback(self):
-        """Callback signature for j1939.Dm1.start_send."""
-        return self.lamp_status(), self.dtc_list()
-
 
 def encode_dm1(state: DiagnosticState) -> bytes:
-    """Encode DM1 payload (lamp + DTCs). May exceed 8 bytes when both active."""
+    """DM1 payload: 2 lamp bytes + 4 bytes per DTC, at least 8 bytes (J1939-73).
+
+    No active faults → SPN/FMI/OC all zero ("no DTC"). One fault → padded with 0xFF
+    to a single 8-byte frame. Two faults → 10 bytes, sent via BAM.
+    """
     data = bytearray(DtcLamp().get_data(state.lamp_status()))
-    for dtc_dic in state.dtc_list():
+    dtcs = state.dtc_list()
+    for dtc_dic in dtcs:
         word = DTC(spn=dtc_dic["spn"], fmi=dtc_dic["fmi"], oc=dtc_dic["oc"]).dtc
-        data.append(word & 0xFF)
-        data.append((word >> 8) & 0xFF)
-        data.append((word >> 16) & 0xFF)
-        data.append((word >> 24) & 0xFF)
-    # Single-frame pad unused DTC slot with 0xFF when exactly one DTC (J1939-73)
-    if len(state.dtc_list()) == 1:
-        data.extend([0xFF, 0xFF])
+        data += word.to_bytes(4, "little")
+    if not dtcs:
+        data += bytes(4)
+    data.extend([0xFF] * (8 - len(data)))
     return bytes(data)
-
-
-def dtc_spn_fmi_from_payload(payload: bytes) -> list[tuple[int, int]]:
-    """Parse SPN/FMI pairs from a single-frame DM1 payload (after 2 lamp bytes)."""
-    out: list[tuple[int, int]] = []
-    i = 2
-    while i + 3 < len(payload):
-        chunk = payload[i : i + 4]
-        if chunk == b"\xff\xff\xff\xff" or chunk[:2] == b"\xff\xff":
-            break
-        word = int.from_bytes(chunk, "little")
-        dtc = DTC(dtc=word)
-        if dtc.spn == 0 and dtc.fmi == 0:
-            break
-        out.append((dtc.spn, dtc.fmi))
-        i += 4
-    return out

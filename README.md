@@ -24,12 +24,12 @@ Built with **python-can**, **can-j1939** and **NiceGUI**.
 |-----|------|--------|-------|---------------------------|---------|
 | 61444 | EEC1: Electronic Engine Controller 1 | `0x0CF00400` | 20 ms | Engine Speed, SPN 190 (`eec1.spn190_rpm`, rpm) | 0 |
 | 65265 | CCVS: Cruise Control / Vehicle Speed | `0x18FEF100` | 100 ms | Wheel-Based Vehicle Speed, SPN 84 (`ccvs.spn84_speed_mph`, mph) | 0 |
-| 65248 | VD: Vehicle Distance | `0x18FEE000` | 1000 ms | Total Vehicle Distance, SPN 245 (`vd.spn917_total_mi`, mi) | 248912.4 |
+| 65248 | VD: Vehicle Distance | `0x18FEE000` | 1000 ms | Total Vehicle Distance, SPN 245 (`vd.spn245_total_mi`, mi) | 248912.4 |
 | 65253 | HOURS: Engine Hours, Revolutions | `0x18FEE500` | 1000 ms | Engine Total Hours of Operation, SPN 247 (`hours.spn247_engine_hours`, h) | 10000 |
 
 All other SPNs in these PGNs are sent as *not available* (`0xFF`).
 
-> The GUI and the config key label total distance as "SPN 917" for historical reasons. On the wire it is encoded in PGN 65248 bytes 5–8, which is SPN 245 (0.125 km/bit).
+> Config files from before 2.0 used the key `spn917_total_mi`; it is still accepted.
 
 ### Automatic odometer and engine hours
 
@@ -121,7 +121,7 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-This installs the app plus **can-j1939**, **nicegui**, **cantools**, **libusb-package** and a base **python-can**. On **Windows**, **pywin32** is installed too (required by can-j1939). Virtual Emulation works right away; no CAN adapter is needed.
+This installs the app plus **can-j1939**, **nicegui**, **libusb-package** and a base **python-can**. On **Windows**, **pywin32** is installed too (required by can-j1939). Virtual Emulation works right away; no CAN adapter is needed.
 
 ### Full install (Real hardware adapters)
 
@@ -235,7 +235,7 @@ Signal keys for `get` / `set`:
 ```text
 eec1.spn190_rpm             set eec1.spn190_rpm 650
 ccvs.spn84_speed_mph        set ccvs.spn84_speed_mph 65
-vd.spn917_total_mi          set vd.spn917_total_mi 250000
+vd.spn245_total_mi          set vd.spn245_total_mi 250000
 hours.spn247_engine_hours   set hours.spn247_engine_hours 12000
 eec1.cycle_ms, ccvs.cycle_ms, vd.cycle_ms, hours.cycle_ms
 ```
@@ -279,7 +279,7 @@ spn84_speed_mph = 0
 [pgn.vd]
 enabled = true
 cycle_ms = 1000
-spn917_total_mi = 248912.4   # starting odometer, miles
+spn245_total_mi = 248912.4   # starting odometer, miles
 
 [pgn.hours]
 enabled = true

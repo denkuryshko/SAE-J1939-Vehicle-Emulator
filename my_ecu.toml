@@ -34,7 +34,7 @@ spn84_speed_mph = 0       # миль/год (60 км/год ≈ 37.3 mph)
 [pgn.vd]
 enabled = true
 cycle_ms = 1000
-spn917_total_mi = 248912.4   # одометр, милі
+spn245_total_mi = 248912.4   # одометр, милі
 
 [pgn.hours]
 enabled = true

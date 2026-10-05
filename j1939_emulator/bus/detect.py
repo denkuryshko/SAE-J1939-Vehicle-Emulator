@@ -276,24 +276,14 @@ def resolve_channel(
     return channels[0]
 
 
-def find_channel(
-    mode: EmulationMode | str,
-    channel: str,
-    timeout: float = 6.0,
-) -> DetectedChannel:
-    """Resolve a user channel: list index (1, 2, …), uid, label, or short name."""
-    channels = detect_hardware(mode=mode, timeout=timeout)
-    needle = channel.strip()
+def match_channel(channels: list[DetectedChannel], channel: str) -> DetectedChannel | None:
+    """Pick a channel by list number (1, 2, … as printed by --list-channels), uid, label or short name."""
+    needle = str(channel).strip()
 
     # Simple: --channel 1 means the first row from --list-channels
     if needle.isdigit():
         idx = int(needle)
-        if 1 <= idx <= len(channels):
-            return channels[idx - 1]
-        raise ValueError(
-            f"Channel number {idx} is out of range "
-            f"(detected {len(channels)} channel(s) in mode {mode!r})"
-        )
+        return channels[idx - 1] if 1 <= idx <= len(channels) else None
 
     for ch in channels:
         if ch.uid == needle or ch.label == needle:
@@ -303,6 +293,25 @@ def find_channel(
             return ch
         if ch.interface == "virtual" and needle in VIRTUAL_CHANNELS and raw_ch == needle:
             return ch
+    return None
+
+
+def find_channel(
+    mode: EmulationMode | str,
+    channel: str,
+    timeout: float = 6.0,
+) -> DetectedChannel:
+    """Resolve a user channel: list index (1, 2, …), uid, label, or short name."""
+    channels = detect_hardware(mode=mode, timeout=timeout)
+    found = match_channel(channels, channel)
+    if found is not None:
+        return found
+    needle = channel.strip()
+    if needle.isdigit():
+        raise ValueError(
+            f"Channel number {needle} is out of range "
+            f"(detected {len(channels)} channel(s) in mode {mode!r})"
+        )
     available = ", ".join(f"{i}:{c.label}" for i, c in enumerate(channels, start=1)) or "(none)"
     raise ValueError(
         f"Channel {channel!r} not found in mode {mode!r}. "
@@ -310,18 +319,7 @@ def find_channel(
     )
 
 
-def open_bus(channel: DetectedChannel, bitrate: int = 500_000, **extra: Any) -> can.BusABC:
-    """Open a Bus from a DetectedChannel."""
-    kwargs = dict(channel.bus_kwargs)
-    kwargs.update(extra)
-    if channel.interface != "virtual":
-        kwargs.setdefault("bitrate", bitrate)
-    if kwargs.get("interface") == "vector":
-        kwargs.setdefault("app_name", "python-can")
-    if kwargs.get("interface") == "virtual":
-        # TX-only sessions should not echo into their own RX queue.
-        kwargs.setdefault("receive_own_messages", False)
-    return can.Bus(**kwargs)
+
 
 
 def supported_interface_names() -> list[str]:

@@ -98,39 +98,6 @@ def slider_spn(
     return sync
 
 
-def bool_toggle(spn: str, name: str, getter, setter) -> None:
-    with ui.element("div").classes("signal-box"):
-        with ui.element("div").classes("signal-top font-mono"):
-            with ui.row().classes("items-center"):
-                ui.label(spn).classes("spn-badge")
-                ui.label(name).classes("signal-name")
-            disp = ui.label("ACTIVE / ON" if getter() else "INACTIVE / OFF").classes("signal-val")
-        with ui.row().classes("items-center justify-between w-full"):
-            ui.label("Discrete Switch Status:").style("font-size:11px;color:#5B6775;")
-            with ui.row().classes("gap-1 font-mono"):
-                btn_off = ui.button("Inactive (0)").classes("toggle-btn")
-                btn_on = ui.button("Active (1)").classes("toggle-btn")
-
-                def set_off() -> None:
-                    setter(False)
-                    disp.set_text("INACTIVE / OFF")
-                    btn_off.classes(add="off-active")
-                    btn_on.classes(remove="active")
-
-                def set_on() -> None:
-                    setter(True)
-                    disp.set_text("ACTIVE / ON")
-                    btn_on.classes(add="active")
-                    btn_off.classes(remove="off-active")
-
-                btn_off.on_click(set_off)
-                btn_on.on_click(set_on)
-                if getter():
-                    btn_on.classes(add="active")
-                else:
-                    btn_off.classes(add="off-active")
-
-
 def pgn_header(
     acronym: str,
     title: str,
@@ -231,10 +198,8 @@ def meter_note(text: str) -> None:
     ui.label(text).style("font-size:11px;color:#5B6775;padding:0 12px 10px;")
 
 
-def build_eec1(sig: SignalState, payload_labels: dict, containers: dict) -> None:
-    card = ui.element("div").classes("pgn-card")
-    containers["eec1"] = card
-    with card:
+def build_eec1(sig: SignalState, payload_labels: dict) -> None:
+    with ui.element("div").classes("pgn-card"):
         details = pgn_header(
             "EEC1",
             "Electronic Engine Controller 1",
@@ -252,10 +217,8 @@ def build_eec1(sig: SignalState, payload_labels: dict, containers: dict) -> None
         )
 
 
-def build_ccvs(sig: SignalState, payload_labels: dict, containers: dict) -> None:
-    card = ui.element("div").classes("pgn-card")
-    containers["ccvs"] = card
-    with card:
+def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
+    with ui.element("div").classes("pgn-card"):
         details = pgn_header(
             "CCVS",
             "Cruise Control / Vehicle Speed",
@@ -274,10 +237,8 @@ def build_ccvs(sig: SignalState, payload_labels: dict, containers: dict) -> None
         )
 
 
-def build_vd(sig: SignalState, payload_labels: dict, containers: dict) -> None:
-    card = ui.element("div").classes("pgn-card")
-    containers["vd"] = card
-    with card:
+def build_vd(sig: SignalState, payload_labels: dict) -> None:
+    with ui.element("div").classes("pgn-card"):
         details = pgn_header(
             "VD",
             "Vehicle Distance (Odometer)",
@@ -289,17 +250,15 @@ def build_vd(sig: SignalState, payload_labels: dict, containers: dict) -> None:
         with details:
             payload_labels["vd"] = payload_strip(6, payload_hex(encode_vd(sig)))
         sync_odo = slider_spn(
-            "SPN 917", "Total Vehicle Distance", "mi", sig.spn917_total_mi, 0, 999999, 10,
-            _bind(sig, "spn917_total_mi"), decimals=1, number_step=0.1,
+            "SPN 245", "Total Vehicle Distance", "mi", sig.spn245_total_mi, 0, 999999, 10,
+            _bind(sig, "spn245_total_mi"), decimals=1, number_step=0.1,
         )
         meter_note("Adds miles automatically while the ECU is running, based on Wheel-Based Vehicle Speed.")
-        follow_meter(sig, "spn917_total_mi", sync_odo, payload_labels["vd"], encode_vd, 0.05)
+        follow_meter(sig, "spn245_total_mi", sync_odo, payload_labels["vd"], encode_vd, 0.05)
 
 
-def build_hours(sig: SignalState, payload_labels: dict, containers: dict) -> None:
-    card = ui.element("div").classes("pgn-card")
-    containers["hours"] = card
-    with card:
+def build_hours(sig: SignalState, payload_labels: dict) -> None:
+    with ui.element("div").classes("pgn-card"):
         details = pgn_header(
             "HOURS",
             "Engine Hours, Revolutions",
@@ -318,9 +277,23 @@ def build_hours(sig: SignalState, payload_labels: dict, containers: dict) -> Non
         follow_meter(sig, "spn247_engine_hours", sync_hours, payload_labels["hours"], encode_hours, 0.005)
 
 
+# SAE J1939-81 NAME industry groups
+_INDUSTRY_GROUPS = {
+    0: "Global",
+    1: "On-Highway",
+    2: "Agricultural & Forestry",
+    3: "Construction",
+    4: "Marine",
+    5: "Industrial / Process",
+}
+
+
 def build_ecu_pane(session, refs: dict[str, Any]) -> None:
-    """ECU & Vehicle (VIN) tab matching standalone_v1.0.html."""
+    """ECU & Vehicle (VIN) tab."""
     identity = session.identity
+    sa = f"0x{identity.source_address:02X}"
+    sa_role = " (Engine #1)" if identity.source_address == 0x00 else ""
+    industry = _INDUSTRY_GROUPS.get(identity.industry_group, "Reserved")
 
     with ui.element("div").classes("card").style(
         "display:flex;flex-direction:column;gap:16px;"
@@ -329,11 +302,11 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
             "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
         ):
             with ui.column().classes("gap-0"):
-                ui.label("ECU & Vehicle Identity (Node 0x00)").style(
+                ui.label(f"ECU & Vehicle Identity (Node {sa})").style(
                     "font-size:14px;font-weight:700;text-transform:uppercase;"
                 )
                 ui.label(
-                    "Engine Controller #1 · Primary Tractor Node (SAE J1939-81 Network Management)"
+                    "Single ECU node · SAE J1939-81 Network Management"
                 ).classes("font-mono").style("font-size:11px;color:#5B6775;")
             claim_chip = ui.element("span").classes("status-pill stopped font-mono").style(
                 "font-size:10px;"
@@ -356,7 +329,7 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         "width:100%;max-width:280px;height:160px;margin:0 auto;"
                         "mix-blend-mode:multiply;"
                     )
-                    ui.label("Class 8 Heavy Duty Tractor · Node 0x00").classes(
+                    ui.label(f"Heavy Duty Truck · Node {sa}").classes(
                         "font-mono"
                     ).style(
                         "margin-top:8px;font-size:11px;font-weight:700;color:#1F2A37;"
@@ -417,11 +390,11 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                     with ui.element("div").classes("font-mono").style(
                         "display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;"
                     ):
-                        for label, value in (
-                            ("Source Address (SA):", "0x00 (Engine #1)"),
-                            ("Industry Group:", "0 (On-Highway)"),
-                            ("Vehicle System:", "0 (Tractor)"),
-                            ("Bitrate:", "500 kbit/s"),
+                        for key, label, value in (
+                            ("sa", "Source Address (SA):", f"{sa}{sa_role}"),
+                            ("industry", "Industry Group:", f"{identity.industry_group} ({industry})"),
+                            ("vehicle_system", "Vehicle System:", str(identity.vehicle_system)),
+                            ("bitrate", "Bitrate:", f"{session.bitrate // 1000} kbit/s"),
                         ):
                             with ui.element("div").style(
                                 "background:#FFF;padding:6px;border:1px solid #CBD5E1;"
@@ -430,7 +403,7 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                                 ui.label(label).style(
                                     "color:#5B6775;font-size:10px;display:block;"
                                 )
-                                ui.label(value).style("font-weight:700;")
+                                refs[f"ecu_{key}"] = ui.label(value).style("font-weight:700;")
                     with ui.element("div").classes("font-mono").style(
                         "margin-top:8px;background:#FFF;padding:8px;"
                         "border:1px solid #CBD5E1;border-radius:3px;"

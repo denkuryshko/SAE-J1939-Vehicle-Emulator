@@ -10,7 +10,6 @@ from typing import Any, Callable
 
 import can
 from j1939 import ControllerApplication, ElectronicControlUnit, Name
-from j1939.diagnostic_messages import Dm1
 
 # can-j1939 job-thread cleanup typos CoUnitialize on Windows; map to real API.
 try:
@@ -24,7 +23,14 @@ except Exception:
     pass
 
 from j1939_emulator.bus.detect import DetectedChannel, EmulationMode
-from j1939_emulator.diagnostics import DM1_CYCLE_MS, DiagnosticState
+from j1939_emulator.diagnostics import (
+    DM1_CYCLE_MS,
+    DM1_PDU_FORMAT,
+    DM1_PDU_SPECIFIC,
+    DM1_PRIORITY,
+    DiagnosticState,
+    encode_dm1,
+)
 from j1939_emulator.ecu_identity import (
     PGN_VI,
     VI_PDU_FORMAT,
@@ -46,6 +52,13 @@ from j1939_emulator.pgn import (
 
 _BITS_PER_FRAME = 142
 _METER_TICK_S = 0.2
+
+_GLOBAL_ADDRESS = 0xFF
+# Acknowledgement PGN 59392 (0xE800)
+_ACK_PDU_FORMAT = 0xE8
+_ACK_PRIORITY = 6
+_ACK_CONTROL_NACK = 0x01
+PGN_DM1 = 65226
 
 # PGN → (priority, encoder) answered on Request (PGN 59904).
 _REQUESTABLE: dict[int, tuple[int, Callable[[SignalState], bytes]]] = {
@@ -300,7 +313,7 @@ class _MeterThread(threading.Thread):
 
 @dataclass
 class EmulatorSession:
-    """Single-channel emulation session for v1.0 (1 ECU SA 0x00)."""
+    """Single-channel emulation session (one ECU node)."""
 
     signals: SignalState = field(default_factory=SignalState)
     identity: EcuIdentity = field(default_factory=EcuIdentity)
@@ -311,8 +324,6 @@ class EmulatorSession:
     _bus: can.BusABC | None = field(default=None, init=False, repr=False)
     _ecu: ElectronicControlUnit | None = field(default=None, init=False, repr=False)
     _ca: ControllerApplication | None = field(default=None, init=False, repr=False)
-    _dm1: Dm1 | None = field(default=None, init=False, repr=False)
-    _dm1_sending: bool = field(default=False, init=False)
     _scheduler: _PgnScheduler | None = field(default=None, init=False, repr=False)
     _channel: DetectedChannel | None = field(default=None, init=False, repr=False)
     _running: bool = field(default=False, init=False)
@@ -480,13 +491,13 @@ class EmulatorSession:
             self._load_pct = 0.0
         self._frozen_uptime = 0.0
         self._running = True
-        self._dm1 = Dm1(self._ca)
-        self._dm1_sending = False
         self._start_scheduler_locked()
         self._meters = _MeterThread(self.signals)
         self._meters.start()
         self._broadcast_vin_locked()
-        self._sync_dm1_locked()
+        # DM1 goes out every second even with no faults (J1939-73), so an ELD sees faults clear.
+        self._send_dm1()
+        self._ca.add_timer(DM1_CYCLE_MS / 1000.0, self._dm1_tick)
 
     def _wait_claim_locked(self, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s
@@ -528,6 +539,17 @@ class EmulatorSession:
             elif pgn in _REQUESTABLE:
                 priority, encode = _REQUESTABLE[pgn]
                 ca.send_pgn(0, (pgn >> 8) & 0xFF, pgn & 0xFF, priority, list(encode(s)))
+            elif pgn == PGN_DM1:
+                self._send_dm1()
+                return
+            elif dest_address != _GLOBAL_ADDRESS:
+                # J1939-21: a destination-specific request for an unsupported PGN gets a NACK
+                # (sent global, requester in byte 5) so the requester need not wait for a timeout.
+                ca.send_pgn(
+                    0, _ACK_PDU_FORMAT, _GLOBAL_ADDRESS, _ACK_PRIORITY,
+                    [_ACK_CONTROL_NACK, 0xFF, 0xFF, 0xFF, src_address & 0xFF,
+                     pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF],
+                )
             else:
                 return
         except RuntimeError:
@@ -535,21 +557,26 @@ class EmulatorSession:
             return
         self._on_tx()
 
-    def _sync_dm1_locked(self) -> None:
-        if not self._running or self._dm1 is None or self._ca is None:
+    def _send_dm1(self) -> None:
+        ca = self._ca
+        if not self._running or ca is None:
             return
-        active = self.diagnostics.active_count > 0
-        if active and not self._dm1_sending:
-            self._dm1.start_send(
-                self.diagnostics.dm1_callback, cycletime=DM1_CYCLE_MS / 1000.0
-            )
-            self._dm1_sending = True
-        elif not active and self._dm1_sending:
-            try:
-                self._dm1.stop_send(self._dm1._send)
-            except Exception:
-                pass
-            self._dm1_sending = False
+        try:
+            ca.send_pgn(0, DM1_PDU_FORMAT, DM1_PDU_SPECIFIC, DM1_PRIORITY, list(encode_dm1(self.diagnostics)))
+        except RuntimeError:
+            return
+        self._on_tx()
+
+    def _dm1_tick(self, _cookie) -> bool:
+        """can-j1939 timer callback; returning True keeps the 1 s DM1 cycle running."""
+        if not self._running:
+            return False
+        self._send_dm1()
+        return True
+
+    def _sync_dm1_locked(self) -> None:
+        # Push the new fault state immediately instead of waiting for the next 1 s tick.
+        self._send_dm1()
 
     def _stop_locked(self) -> None:
         if self._started_at is not None and self._running:
@@ -575,13 +602,11 @@ class EmulatorSession:
                 self._lock.acquire()
 
         # 2) Stop DM1 then CA (both use the bus / ECU job thread).
-        if self._dm1 is not None and self._dm1_sending:
+        if self._ca is not None:
             try:
-                self._dm1.stop_send(self._dm1._send)
+                self._ca.remove_timer(self._dm1_tick)
             except Exception:
                 pass
-        self._dm1_sending = False
-        self._dm1 = None
 
         if self._ca is not None:
             try:
@@ -691,6 +716,5 @@ class EmulatorSession:
                 hz += 1000.0 / max(1, s.cycle_vd_ms)
             if s.hours_enabled:
                 hz += 1000.0 / max(1, s.cycle_hours_ms)
-            if self.diagnostics.active_count > 0:
-                hz += 1.0
+            hz += 1000.0 / DM1_CYCLE_MS
             self._load_pct = min(100.0, (hz * _BITS_PER_FRAME / max(self.bitrate, 1)) * 100.0)

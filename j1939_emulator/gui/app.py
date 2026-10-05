@@ -1,4 +1,4 @@
-"""NiceGUI application matching standalone_v1.0.html (M1: Bus + Signals)."""
+"""NiceGUI web application: bus control, signals, ECU/VIN and diagnostics tabs."""
 
 from __future__ import annotations
 
@@ -11,10 +11,13 @@ from typing import Any
 
 from nicegui import app, ui
 
+from j1939_emulator import __version__
+
 from j1939_emulator.bus.detect import (
     DetectedChannel,
     EmulationMode,
     detect_hardware,
+    match_channel,
     resolve_channel,
 )
 from j1939_emulator.bus.session import EmulatorSession
@@ -52,12 +55,13 @@ class GuiState:
         self.channel_uid: str | None = None
         self.bitrate = 500_000
         self.payload_labels: dict[str, Any] = {}
-        self.pgn_containers: dict[str, Any] = {}
         self.ui_refs: dict[str, Any] = {}
         self.host = "127.0.0.1"
         self.port = 8080
         self.config_path: str | None = None
         self.open_browser = True
+        # CLI overrides (--mode/--channel/--bitrate), carried over on Apply Port relaunch.
+        self.cli_overrides: dict[str, Any] = {}
         self._relaunch: dict[str, Any] | None = None
 
 
@@ -66,6 +70,9 @@ def run_gui(
     host: str = "127.0.0.1",
     port: int = 8080,
     open_browser: bool = True,
+    mode_override: str | None = None,
+    channel_override: str | None = None,
+    bitrate_override: int | None = None,
 ) -> None:
     signals = SignalState()
     identity = EcuIdentity()
@@ -83,6 +90,13 @@ def run_gui(
         mode = cfg.bus.mode
         preferred_channel = cfg.bus.channel
 
+    if mode_override:
+        mode = EmulationMode(mode_override)
+    if channel_override:
+        preferred_channel = channel_override
+    if bitrate_override:
+        bitrate = int(bitrate_override)
+
     session = EmulatorSession(
         signals=signals,
         identity=identity,
@@ -97,15 +111,19 @@ def run_gui(
     state.port = int(port)
     state.config_path = config_path
     state.open_browser = open_browser
+    state.cli_overrides = {
+        "mode": mode_override,
+        "channel": channel_override,
+        "bitrate": bitrate_override,
+    }
 
     @app.on_startup
     def _startup() -> None:
         state.channels = detect_hardware(mode=state.mode, timeout=6.0)
         if preferred_channel:
-            for ch in state.channels:
-                if preferred_channel in (ch.uid, str(ch.bus_kwargs.get("channel")), ch.label):
-                    state.channel_uid = ch.uid
-                    break
+            ch = match_channel(state.channels, preferred_channel)
+            if ch is not None:
+                state.channel_uid = ch.uid
         if state.channel_uid is None and state.channels:
             state.channel_uid = state.channels[0].uid
         if state.open_browser:
@@ -154,6 +172,9 @@ def _relaunch_gui(opts: dict[str, Any]) -> None:
         cmd.extend(["--config", str(opts["config_path"])])
     if not opts.get("open_browser", True):
         cmd.append("--no-browser")
+    for flag in ("mode", "channel", "bitrate"):
+        if opts.get(flag):
+            cmd.extend([f"--{flag}", str(opts[flag])])
     kwargs: dict[str, Any] = {"cwd": os.getcwd()}
     if sys.platform == "win32":
         # Keep a visible console for the restarted server.
@@ -189,7 +210,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
             with ui.element("div").classes("brand-section"):
                 ui.label("E").classes("brand-icon")
                 ui.label("SAE J1939 Vehicle Emulator").classes("brand-title")
-                ui.label("v1.0").classes("badge-subtle font-mono")
+                ui.label(f"v{__version__}").classes("badge-subtle font-mono")
             with ui.element("div").classes("topbar-controls"):
                 top_pill = ui.element("span").classes("status-pill stopped font-mono")
                 with top_pill:
@@ -285,7 +306,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                 tab_ecu = ui.button().classes("tab-btn").props("flat dense")
                 with tab_ecu:
                     ui.label("ECU & Vehicle (VIN)")
-                    ui.label("Node 0x00").classes("tab-pill")
+                    ui.label(f"Node 0x{session.identity.source_address:02X}").classes("tab-pill")
                 tab_diag = ui.button().classes("tab-btn").props("flat dense")
                 with tab_diag:
                     ui.label("Diagnostics (2 DTCs)")
@@ -302,13 +323,12 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
                     ).classes("font-mono").style("font-size:11px;color:#5B6775;")
 
                 state.payload_labels.clear()
-                state.pgn_containers.clear()
                 sig.clear_listeners()
 
-                build_eec1(sig, state.payload_labels, state.pgn_containers)
-                build_ccvs(sig, state.payload_labels, state.pgn_containers)
-                build_vd(sig, state.payload_labels, state.pgn_containers)
-                build_hours(sig, state.payload_labels, state.pgn_containers)
+                build_eec1(sig, state.payload_labels)
+                build_ccvs(sig, state.payload_labels)
+                build_vd(sig, state.payload_labels)
+                build_hours(sig, state.payload_labels)
 
             pane_ecu = ui.element("section")
             with pane_ecu:
@@ -323,13 +343,13 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
         with ui.element("footer").classes("j1939-footer"):
             with ui.element("div").classes("footer-left font-mono"):
                 foot_status = ui.label("● ECU STOPPED")
-                foot_sa = ui.label("SA: 0x00")
+                foot_sa = ui.label(f"SA: 0x{session.identity.source_address:02X}")
                 foot_bitrate = ui.label(f"{state.bitrate // 1000} kbit/s")
             with ui.row().classes("items-center gap-3 font-mono"):
                 foot_tx = ui.label("TX Broadcast: 0 frames")
                 foot_dtc = ui.label("Active Faults: 0 DTCs").style("color:#1F9D55")
                 state.ui_refs["foot_dtc"] = foot_dtc
-                ui.label("SAE J1939 v1.0").style("color:#1F9D55;font-weight:700;")
+                ui.label(f"SAE J1939 · v{__version__}").style("color:#1F9D55;font-weight:700;")
 
     def refresh_channels(*, prefer: DetectedChannel | None = None) -> DetectedChannel | None:
         prior = prefer
@@ -339,14 +359,9 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
         options = {ch.uid: ch.label for ch in state.channels}
         channel_select.options = options
         if preferred_channel and state.channel_uid is None:
-            for ch in state.channels:
-                if preferred_channel in (
-                    ch.uid,
-                    str(ch.bus_kwargs.get("channel")),
-                    ch.label,
-                ):
-                    state.channel_uid = ch.uid
-                    break
+            ch = match_channel(state.channels, preferred_channel)
+            if ch is not None:
+                state.channel_uid = ch.uid
         resolved = resolve_channel(
             state.channels, uid=state.channel_uid, previous=prior
         )
@@ -500,6 +515,7 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
             "port": new_port,
             "config_path": state.config_path,
             "open_browser": state.open_browser,
+            **state.cli_overrides,
         }
         session.stop()
         ui.notify(f"Restarting on http://{raw_host}:{new_port}/ …", type="info")
@@ -548,6 +564,9 @@ def _build_page(state: GuiState, preferred_channel: str | None) -> None:
         stat_load.set_text(f"{load:.1f}%")
         foot_tx.set_text(f"TX Broadcast: {st.tx_count} frames")
         foot_bitrate.set_text(f"{st.bitrate // 1000} kbit/s")
+        ecu_bitrate = state.ui_refs.get("ecu_bitrate")
+        if ecu_bitrate is not None:
+            ecu_bitrate.set_text(f"{st.bitrate // 1000} kbit/s")
         foot_sa.set_text(f"SA: 0x{st.sa:02X}")
         c = st.active_dtcs
         if c > 0:

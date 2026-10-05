@@ -62,7 +62,7 @@ def format_channel_table(
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="j1939_emulator",
-        description="SAE J1939 Vehicle Emulator v1.0",
+        description=f"SAE J1939 Vehicle Emulator {__version__}",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     p.add_argument(
@@ -91,7 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         "-c",
         type=str,
-        help="TOML ECU config (CLI mode)",
+        help="TOML ECU config",
     )
     p.add_argument(
         "--mode",
@@ -154,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
             host=args.host,
             port=int(args.port),
             open_browser=not args.no_browser,
+            mode_override=args.mode,
+            channel_override=args.channel,
+            bitrate_override=args.bitrate,
         )
         return 0
 

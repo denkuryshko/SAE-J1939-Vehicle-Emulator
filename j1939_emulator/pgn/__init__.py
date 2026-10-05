@@ -1,4 +1,4 @@
-"""PGN / SPN state and encoders matching standalone_v1.0.html."""
+"""PGN / SPN state and encoders for the broadcast PGNs."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ class SignalState:
     ccvs_enabled: bool = True
 
     # VD
-    spn917_total_mi: float = 248912.4
+    spn245_total_mi: float = 248912.4
     vd_enabled: bool = True
 
     # HOURS
@@ -51,7 +51,7 @@ class SignalState:
         if self.spn190_rpm > 0:
             self.spn247_engine_hours += dt_s / 3600.0
         if self.spn84_speed_mph > 0:
-            self.spn917_total_mi += self.spn84_speed_mph * dt_s / 3600.0
+            self.spn245_total_mi += self.spn84_speed_mph * dt_s / 3600.0
 
     def set_spn(self, key: str, value: object) -> None:
         """Set a known SPN field by dotted or flat key and notify listeners."""
@@ -84,8 +84,11 @@ class SignalState:
             "spn190_rpm": "spn190_rpm",
             "ccvs.spn84_speed_mph": "spn84_speed_mph",
             "spn84_speed_mph": "spn84_speed_mph",
-            "vd.spn917_total_mi": "spn917_total_mi",
-            "spn917_total_mi": "spn917_total_mi",
+            "vd.spn245_total_mi": "spn245_total_mi",
+            "spn245_total_mi": "spn245_total_mi",
+            # pre-2.0 names (VD distance was mislabelled SPN 917)
+            "vd.spn917_total_mi": "spn245_total_mi",
+            "spn917_total_mi": "spn245_total_mi",
             "hours.spn247_engine_hours": "spn247_engine_hours",
             "spn247_engine_hours": "spn247_engine_hours",
             "eec1.cycle_ms": "cycle_eec1_ms",
@@ -103,16 +106,11 @@ class SignalState:
         return attr
 
 
-# CAN IDs (priority + PGN + SA 0x00) matching HTML mock
+# CAN IDs (priority + PGN + SA 0x00)
 CAN_ID_EEC1 = 0x0CF00400
 CAN_ID_CCVS = 0x18FEF100
 CAN_ID_VD = 0x18FEE000
 CAN_ID_HOURS = 0x18FEE500
-
-PERIOD_EEC1_S = 0.020
-PERIOD_CCVS_S = 0.100
-PERIOD_VD_S = 1.000
-PERIOD_HOURS_S = 1.000
 
 
 def encode_eec1(state: SignalState) -> bytes:
@@ -152,7 +150,7 @@ def encode_ccvs(state: SignalState) -> bytes:
 
 def encode_vd(state: SignalState) -> bytes:
     """VD PGN 65248 — bytes 1-4 trip (SPN 244, not available), bytes 5-8 total (SPN 245), 0.125 km/bit."""
-    dist_km = state.spn917_total_mi * 1.60934
+    dist_km = state.spn245_total_mi * 1.60934
     raw_dist = round(dist_km / 0.125)
     return bytes(
         [
