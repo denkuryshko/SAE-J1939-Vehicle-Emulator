@@ -1,0 +1,42 @@
+# Конфіг під CANable (candleLight) + ELD, J1939 250 kbit/s
+# Запуск: .venv\Scripts\python.exe -m j1939_emulator --gui --config my_ecu.toml
+
+[bus]
+mode = "real"
+channel = "1"             # номер адаптера з: --list-channels --mode real
+bitrate = 250000
+start_on_launch = false   # START натискаєте самі в GUI
+
+[ecu]
+source_address = 0x00
+industry_group = 0
+vehicle_system = 0
+name = 0x0020000000000000
+
+[vehicle]
+vin = "1HTMMAAL7GH123456"
+
+[diagnostics]
+dtc_spn110_fmi3 = false
+dtc_spn190_fmi0 = false
+
+# Старт: двигун працює на холостих, авто стоїть
+[pgn.eec1]
+enabled = true
+cycle_ms = 20
+spn190_rpm = 800
+
+[pgn.ccvs]
+enabled = true
+cycle_ms = 100
+spn84_speed_mph = 0       # миль/год (60 км/год ≈ 37.3 mph)
+
+[pgn.vd]
+enabled = true
+cycle_ms = 1000
+spn917_total_mi = 248912.4   # одометр, милі
+
+[pgn.hours]
+enabled = true
+cycle_ms = 1000
+spn247_engine_hours = 10000.0

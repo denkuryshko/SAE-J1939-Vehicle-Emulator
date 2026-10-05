@@ -1,0 +1,38 @@
+[bus]
+mode = "virtual"          # "real" | "virtual"
+channel = "vcan0"
+bitrate = 500000
+start_on_launch = true
+
+[ecu]
+source_address = 0x00
+industry_group = 0
+vehicle_system = 0
+name = 0x0020000000000000
+
+[vehicle]
+vin = "1HTMMAAL7GH123456"
+
+[diagnostics]
+dtc_spn110_fmi3 = false
+dtc_spn190_fmi0 = false
+
+[pgn.eec1]
+enabled = true
+cycle_ms = 20
+spn190_rpm = 0
+
+[pgn.ccvs]
+enabled = true
+cycle_ms = 100
+spn84_speed_mph = 0
+
+[pgn.vd]
+enabled = true
+cycle_ms = 1000
+spn917_total_mi = 248912.4
+
+[pgn.hours]
+enabled = true
+cycle_ms = 1000
+spn247_engine_hours = 10000.0
