@@ -9,7 +9,7 @@ from typing import Callable
 from j1939 import Name
 
 # Defaults
-DEFAULT_VIN = "1HTMMAAL7GH123456"
+DEFAULT_VIN = "1HTMMAAL5GH123456"
 DEFAULT_SOURCE_ADDRESS = 0x00
 DEFAULT_INDUSTRY_GROUP = 1  # On-Highway Equipment
 DEFAULT_VEHICLE_SYSTEM = 0  # Non-specific
@@ -53,6 +53,30 @@ def validate_vin(vin: str, *, allow_empty: bool = False) -> str:
             "VIN may only contain A–Z and 0–9 (excluding I, O, Q)"
         )
     return cleaned
+
+
+_VIN_TRANSLIT = {
+    **{str(d): d for d in range(10)},
+    **dict(zip("ABCDEFGH", range(1, 9))),
+    **dict(zip("JKLMNPR", (1, 2, 3, 4, 5, 7, 9))),
+    **dict(zip("STUVWXYZ", range(2, 10))),
+}
+_VIN_WEIGHTS = (8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2)
+
+
+def vin_check_digit_warning(vin: str) -> str | None:
+    """Warn when a 17-char VIN fails the North American check digit (position 9).
+
+    Not an error: test VINs and some non-NA VINs legitimately skip it, but ELDs
+    and backends that validate VINs may reject them.
+    """
+    if len(vin) != 17:
+        return None
+    total = sum(_VIN_TRANSLIT[c] * w for c, w in zip(vin, _VIN_WEIGHTS))
+    expected = "X" if total % 11 == 10 else str(total % 11)
+    if vin[8] == expected:
+        return None
+    return f"VIN check digit (position 9) is {vin[8]!r}, expected {expected!r}"
 
 
 @dataclass

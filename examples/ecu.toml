@@ -14,7 +14,7 @@ manufacturer_code = 0
 identity_number = 0
 
 [vehicle]
-vin = "1HTMMAAL7GH123456"
+vin = "1HTMMAAL5GH123456"
 persist_meters = true    # keep odometer / engine hours per VIN between runs
 
 [diagnostics]
