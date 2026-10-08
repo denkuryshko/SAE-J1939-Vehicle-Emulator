@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field
 from typing import Callable
@@ -64,6 +65,35 @@ _VIN_TRANSLIT = {
 _VIN_WEIGHTS = (8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2)
 
 
+def vin_check_digit(vin: str) -> str:
+    """North American check digit (position 9) for a 17-char VIN."""
+    total = sum(_VIN_TRANSLIT[c] * w for c, w in zip(vin, _VIN_WEIGHTS))
+    return "X" if total % 11 == 10 else str(total % 11)
+
+
+# Model year codes (position 10); I, O, Q, U, Z and 0 are never used.
+_VIN_YEAR_CODES = "ABCDEFGHJKLMNPRSTVWXY123456789"
+_VIN_CHARS = "ABCDEFGHJKLMNPRSTUVWXYZ0123456789"
+
+
+def generate_vin(template: str = DEFAULT_VIN, rng: random.Random | None = None) -> str:
+    """Random 17-char VIN with a valid check digit.
+
+    Keeps WMI + vehicle descriptor (positions 1-8) from a full 17-char template so the
+    make/model stays the same; randomizes model year, plant and serial number.
+    """
+    rng = rng or random.Random()
+    prefix = template[:8] if len(template) == 17 else DEFAULT_VIN[:8]
+    vin = (
+        prefix
+        + "0"
+        + rng.choice(_VIN_YEAR_CODES)
+        + rng.choice(_VIN_CHARS)
+        + "".join(rng.choice("0123456789") for _ in range(6))
+    )
+    return vin[:8] + vin_check_digit(vin) + vin[9:]
+
+
 def vin_check_digit_warning(vin: str) -> str | None:
     """Warn when a 17-char VIN fails the North American check digit (position 9).
 
@@ -72,8 +102,7 @@ def vin_check_digit_warning(vin: str) -> str | None:
     """
     if len(vin) != 17:
         return None
-    total = sum(_VIN_TRANSLIT[c] * w for c, w in zip(vin, _VIN_WEIGHTS))
-    expected = "X" if total % 11 == 10 else str(total % 11)
+    expected = vin_check_digit(vin)
     if vin[8] == expected:
         return None
     return f"VIN check digit (position 9) is {vin[8]!r}, expected {expected!r}"

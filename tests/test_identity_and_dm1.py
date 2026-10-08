@@ -1,7 +1,12 @@
 import pytest
 
 from j1939_emulator.diagnostics import DiagnosticState, encode_dm1
-from j1939_emulator.ecu_identity import EcuIdentity, validate_vin, vin_check_digit_warning
+from j1939_emulator.ecu_identity import (
+    EcuIdentity,
+    generate_vin,
+    validate_vin,
+    vin_check_digit_warning,
+)
 
 
 def test_vin_payload_is_ascii_with_star_delimiter():
@@ -19,6 +24,14 @@ def test_vin_check_digit_warning():
     assert vin_check_digit_warning("1HTMMAAL5GH123456") is None
     assert "expected '5'" in vin_check_digit_warning("1HTMMAAL7GH123456")
     assert vin_check_digit_warning("ABC123") is None  # partial VINs are not checked
+
+
+def test_generate_vin_is_valid_and_keeps_prefix():
+    for _ in range(200):
+        vin = generate_vin("1HTMMAAL5GH123456")
+        assert validate_vin(vin) == vin and len(vin) == 17
+        assert vin.startswith("1HTMMAAL")
+        assert vin_check_digit_warning(vin) is None
 
 
 def test_default_name_is_on_highway_engine():

@@ -216,3 +216,14 @@ def test_adapter_echo_does_not_cause_claim_flood(bench):
     claims = _collect(eld, 1.0, 0xEEFF)
     del ecu_bus.send
     assert len(claims) == 1
+
+
+def test_key_on_engine_off_still_answers_vin(bench):
+    session, eld = bench
+    session.signals.spn190_rpm = 650
+    session.signals.set_spn("engine_running", False)
+    _drain(eld)
+    rpm_frames = _collect(eld, 0.3, 0xF004)
+    assert rpm_frames and all(f[3:5] == b"\x00\x00" for f in rpm_frames)
+    _request(eld, 65260)
+    assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"

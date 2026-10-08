@@ -31,6 +31,12 @@ All other SPNs in these PGNs are sent as *not available* (`0xFF`).
 
 > Config files from before 2.0 used the key `spn917_total_mi`; it is still accepted.
 
+### Ignition: key ON with the engine off
+
+The **Ignition** card at the top of the Signals tab switches between **Engine running** and **Key ON · engine off**. With the key ON and the engine off, the ECU stays on the bus, claims its address and answers requests (VIN, odometer, engine hours), but EEC1 and CCVS send 0 rpm and 0 mph and the meters stand still. Switching to **Engine running** sets Engine Speed to idle (650 rpm); switching to **Key ON · engine off** sets it to 0 rpm. The Vehicle Speed setting is kept and sent again once the engine runs. In the CLI use `ignition on` / `ignition run`; in the config use `ignition` under `[vehicle]`.
+
+Some ELDs only start asking the ECU for the VIN once they see the engine running. In that case the VIN stays empty in the app while the key is ON; the [requests and J1939 trace](#requests-and-j1939-trace) show whether the ELD sends any request at all.
+
 ### Automatic odometer and engine hours
 
 While the ECU is running (after **START**):
@@ -270,6 +276,7 @@ For Virtual mode you can also use the names `vcan0`, `vcan1`, `vcan2`. Use `--no
 | `status` / `payloads` | Live stats / current PGN hex |
 | `get <key>` / `set <key> <value>` | Read / change a signal (keys below) |
 | `vin [value]` | Show or set the VIN (rebroadcasts PGN 65260 if running) |
+| `ignition [on\|run]` | Show or set the ignition: `on` = key ON, engine off; `run` = engine running |
 | `dtc 1\|2\|both on\|off` | Inject / clear DM1 faults |
 | `requests [clear]` | Requests received from other nodes and how they were answered |
 | `trace [N]` | Last N lines (default 40) of the [J1939 trace](#requests-and-j1939-trace) and its file path |
@@ -311,6 +318,7 @@ identity_number = 0
 [vehicle]
 vin = "1HTMMAAL5GH123456"
 persist_meters = true    # keep odometer / engine hours per VIN between runs
+ignition = "run"         # "run" = engine running | "on" = key ON, engine off (0 rpm / 0 mph)
 
 [diagnostics]
 dtc_spn110_fmi3 = false   # SPN 110 / FMI 3: amber warning

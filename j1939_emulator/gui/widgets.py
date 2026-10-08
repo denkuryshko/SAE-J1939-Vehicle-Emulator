@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from nicegui import ui
 
-from j1939_emulator.ecu_identity import vin_check_digit_warning
+from j1939_emulator.ecu_identity import generate_vin, vin_check_digit_warning
 from j1939_emulator.pgn import (
     SignalState,
     encode_ccvs,
@@ -200,6 +200,49 @@ def meter_note(text: str) -> None:
     ui.label(text).style("font-size:11px;color:#5B6775;padding:0 12px 10px;")
 
 
+def engine_off_note(sig: SignalState, text: str) -> None:
+    """Warning shown in a card while the key is ON with the engine off."""
+    note = ui.label(text).style(
+        "font-size:11px;color:#B45309;background:#FFFBEB;padding:6px 12px;"
+        "border-bottom:1px solid #FDE68A;"
+    )
+    note.set_visibility(not sig.engine_running)
+    ui.timer(0.5, lambda: note.set_visibility(not sig.engine_running))
+
+
+def build_ignition(sig: SignalState) -> None:
+    """Key switch: key ON with the engine off, or engine running."""
+    with ui.element("div").classes("pgn-card"):
+        with ui.element("div").classes("pgn-header"):
+            with ui.element("div").classes("pgn-title-group"):
+                ui.label("KEY").classes("badge-acronym font-mono")
+                ui.label("Ignition").classes("pgn-name")
+            toggle = ui.toggle(
+                {"on": "Key ON · engine off", "run": "Engine running"},
+                value="run" if sig.engine_running else "on",
+            ).props("dense no-caps unelevated toggle-color=primary")
+        ui.label(
+            "Key ON, engine off: the ECU stays on the bus and answers requests (VIN, odometer, "
+            "engine hours), but sends 0 rpm and 0 mph and the meters stand still. "
+            "Switching sets Engine Speed to idle 650 rpm (engine running) or 0 rpm (key ON)."
+        ).style("font-size:11px;color:#5B6775;padding:8px 12px;")
+
+        def apply(e) -> None:
+            running = e.value == "run"
+            if running == sig.engine_running:
+                return
+            sig.set_ignition(running)  # also moves Engine Speed to idle / 0 rpm
+
+        toggle.on_value_change(apply)
+
+        def follow() -> None:
+            want = "run" if sig.engine_running else "on"
+            if toggle.value != want:  # changed outside this page (e.g. another browser tab)
+                toggle.value = want
+
+        ui.timer(0.5, follow)
+
+
 def build_eec1(sig: SignalState, payload_labels: dict) -> None:
     with ui.element("div").classes("pgn-card"):
         details = pgn_header(
@@ -212,11 +255,21 @@ def build_eec1(sig: SignalState, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["eec1"] = payload_strip(3, payload_hex(encode_eec1(sig)))
-        slider_spn(
+        engine_off_note(sig, "Engine off: sending 0 rpm. Starting the engine sets idle 650 rpm.")
+        sync_rpm = slider_spn(
             "SPN 190", "Engine Speed", "rpm", sig.spn190_rpm, 0, 3500, 25,
             _bind(sig, "spn190_rpm"),
             presets=[("0 rpm", 0), ("Idle 650", 650), ("Cruise 1250", 1250), ("Rated 2100", 2100)],
         )
+        shown = [sig.spn190_rpm]
+
+        def follow_rpm() -> None:
+            # The ignition switch (or another tab) changes rpm outside this slider.
+            if sig.spn190_rpm != shown[0]:
+                shown[0] = sig.spn190_rpm
+                sync_rpm(sig.spn190_rpm)
+
+        ui.timer(0.3, follow_rpm)
 
 
 def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
@@ -231,6 +284,7 @@ def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["ccvs"] = payload_strip(6, payload_hex(encode_ccvs(sig)))
+        engine_off_note(sig, "Engine off: sending 0 mph. This setting is used once the engine runs.")
         slider_spn(
             "SPN 84", "Wheel-Based Vehicle Speed", "mph", sig.spn84_speed_mph, 0, 120, 0.5,
             _bind(sig, "spn84_speed_mph"),
@@ -362,6 +416,9 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         btn_copy = ui.button("Copy").classes(
                             "action-btn btn-restart font-mono"
                         ).props("unelevated dense")
+                        btn_generate = ui.button("Generate").classes(
+                            "action-btn btn-restart font-mono"
+                        ).props("unelevated dense")
                     ui.label(
                         "Broadcast on START, when Set, and on Request "
                         "(PGN 59904) — PGN 65260 via BAM."
@@ -388,8 +445,13 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         except Exception:
                             ui.notify(f"VIN: {text}", type="info")
 
+                    def on_generate() -> None:
+                        vin_input.value = generate_vin(identity.vin)
+                        ui.notify("New VIN generated — press Set to apply", type="info")
+
                     btn_set_vin.on_click(lambda: on_vin_change())
                     btn_copy.on_click(on_copy)
+                    btn_generate.on_click(on_generate)
 
             with ui.column().classes("gap-3"):
                 with ui.element("div").style(

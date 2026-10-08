@@ -16,7 +16,7 @@ from j1939_emulator.bus.detect import (
     resolve_channel,
 )
 from j1939_emulator.bus.session import EmulatorSession
-from j1939_emulator.config import load_config
+from j1939_emulator.config import IGNITION_VALUES, load_config
 from j1939_emulator.ecu_identity import vin_check_digit_warning
 from j1939_emulator.meters_store import restore_meters
 from j1939_emulator.pgn import all_payloads
@@ -136,11 +136,16 @@ status                   — uptime / TX / load / claim / DTCs / bus health / ot
 payloads                 — current PGN hex
 requests [clear]         — Requests (PGN 59904) from other nodes and how they were answered
 trace [N]                — last N lines (default 40) of the J1939 trace and its file path
+ignition [on|run]        — show or set ignition: on = key ON, engine off; run = engine running
 get <key>                — read SPN (e.g. get eec1.spn190_rpm)
 set <key> <value>        — change SPN (e.g. set eec1.spn190_rpm 2100)
 vin [value]              — show or set 17-char VIN
 dtc 1|2|both on|off      — inject/clear DM1 faults
 stop | start | reset | help | quit"""
+
+
+def _ignition_name(signals) -> str:
+    return "run" if signals.engine_running else "on (engine off)"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,9 +442,19 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"uptime={mm:02d}:{ss:02d} tx={st.tx_count} "
                     f"load={st.load_pct:.1f}% bitrate={st.bitrate} "
                     f"dtcs={st.active_dtcs} bus={st.bus_health.value} peers={st.peers} "
+                    f"ignition={_ignition_name(session.signals)} "
                     f"vin={session.identity.vin} "
                     f"channel={channel.label!r}"
                 )
+                continue
+            if cmd == "ignition":
+                if rest:
+                    choice = rest[0].lower()
+                    if choice not in IGNITION_VALUES:
+                        print("usage: ignition [on|run]")
+                        continue
+                    session.signals.set_ignition(IGNITION_VALUES[choice])
+                print(f"ignition={_ignition_name(session.signals)}")
                 continue
             if cmd == "requests":
                 if rest and rest[0] == "clear":

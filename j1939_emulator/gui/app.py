@@ -30,6 +30,7 @@ from j1939_emulator.gui.widgets import (
     build_ecu_pane,
     build_logs_pane,
     build_eec1,
+    build_ignition,
     build_hours,
     build_vd,
 )
@@ -357,6 +358,7 @@ def _build_page(state: GuiState) -> None:
                 state.payload_labels.clear()
                 sig.clear_listeners()
 
+                build_ignition(sig)
                 build_eec1(sig, state.payload_labels)
                 build_ccvs(sig, state.payload_labels)
                 build_vd(sig, state.payload_labels)
