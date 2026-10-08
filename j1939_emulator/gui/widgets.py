@@ -8,7 +8,14 @@ from typing import Any, Callable
 
 from nicegui import ui
 
-from j1939_emulator.bus.trace import TRAFFIC_ROWS, TrafficEntry, split_id
+from j1939_emulator.bus.trace import (
+    TRAFFIC_ROWS,
+    TrafficEntry,
+    decode,
+    pgn_name,
+    split_id,
+    trace_dir,
+)
 from j1939_emulator.ecu_identity import generate_vin, vin_check_digit_warning
 from j1939_emulator.pgn import (
     SignalState,
@@ -615,71 +622,135 @@ def _request_rows(session) -> list[dict[str, Any]]:
 
 
 _TRAFFIC_ID = "j1939-traffic"
-_TRAFFIC_COLUMNS = ("Time", "Dir", "CAN ID", "PGN", "SA", "DA", "Type", "Data")
+_TRAFFIC_COLUMNS = ("Time", "Dir", "CAN ID", "PGN", "SA", "DA", "Type", "Data", "Decoded")
+_FILTER_HELP = (
+    "Words separated by spaces must all match; -word hides rows that contain it. "
+    "Field filters: pgn:65260  sa:F9  da:00  id:18EA  type:request  dir:rx. "
+    "Example: sa:f9 -tp.dt"
+)
 
-# Rows are drawn in the browser: the server only sends the new frames each tick, and the
-# table keeps at most TRAFFIC_ROWS rows (oldest dropped first), so the page stays fast.
+# Rows are drawn in the browser: the server only sends the new frames each tick. Cyclic
+# broadcasts and everything else are capped separately at TRAFFIC_ROWS rows each (oldest
+# dropped first), so the page stays fast and a 20 ms EEC1 cannot push a request out of view.
+# Filtering runs here too, over the rows already drawn and each new one.
 _TRAFFIC_JS = """
 <script>
 window.j1939Traffic = (() => {
   const MAX = %d;
+  const FIELD = {dir: 1, id: 2, pgn: 3, sa: 4, da: 5, type: 6};
+  const views = {};
   const el = (id) => document.getElementById(id);
   const atBottom = (w) => w.scrollHeight - w.scrollTop - w.clientHeight < 24;
   const hint = (id, show) => { const h = el(id + '-new'); if (h) h.style.display = show ? '' : 'none'; };
-  const empty = (id, body) => { const e = el(id + '-empty'); if (e) e.style.display = body.rows.length ? 'none' : ''; };
-  function bind(id) {
-    const w = el(id);
-    if (w && !w.dataset.bound) {
-      w.dataset.bound = '1';
-      w.dataset.follow = '1';
-      w.addEventListener('scroll', () => {
-        if (!w.offsetParent) return;
-        w.dataset.follow = atBottom(w) ? '1' : '0';
-        if (atBottom(w)) hint(id, false);
-      });
+  const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const load = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  function parse(q) {
+    return q.trim().toLowerCase().split(/\\s+/).filter(Boolean).map((t) => {
+      const neg = t.length > 1 && t[0] === '-';
+      if (neg) t = t.slice(1);
+      const m = t.match(/^(dir|id|pgn|sa|da|type):(.*)$/);
+      let val = m ? m[2] : t;
+      if (m && (m[1] === 'sa' || m[1] === 'da')) val = val.replace(/^0x/, '').padStart(2, '0');
+      return {neg, field: m ? m[1] : null, val};
+    }).filter((t) => t.val !== '');
+  }
+  function matches(v, tr) {
+    if (v.hideCyc && tr.dataset.cyc === '1') return false;
+    for (const t of v.terms) {
+      let ok;
+      if (!t.field) ok = tr.dataset.hay.includes(t.val);
+      else {
+        const cell = tr.cells[FIELD[t.field]].textContent.toLowerCase();
+        ok = (t.field === 'sa' || t.field === 'da') ? cell === t.val : cell.includes(t.val);
+      }
+      if (ok === t.neg) return false;
     }
-    return w;
+    return true;
+  }
+  function count(id) {
+    const v = views[id], c = el(id + '-count');
+    const total = v.events.length + v.cyclic.length;
+    const e = el(id + '-empty');
+    if (e) e.style.display = total ? 'none' : '';
+    if (!c) return;
+    const shown = v.body.querySelectorAll('tr:not(.tr-hidden)').length;
+    c.textContent = shown === total ? total + ' frames' : shown + ' of ' + total + ' frames';
+  }
+  function view(id) {
+    if (views[id] && views[id].body.isConnected) return views[id];
+    const w = el(id);
+    if (!w) return null;
+    const v = {w, body: w.querySelector('tbody'), events: [], cyclic: [], terms: [], hideCyc: false};
+    views[id] = v;
+    w.dataset.follow = '1';
+    w.addEventListener('scroll', () => {
+      if (!w.offsetParent) return;
+      w.dataset.follow = atBottom(w) ? '1' : '0';
+      if (atBottom(w)) hint(id, false);
+    });
+    const q = el(id + '-q'), cyc = el(id + '-cyc');
+    if (q) q.value = load('j1939.traffic.q') || '';
+    if (cyc) cyc.checked = load('j1939.traffic.hideCyc') === '1';
+    v.terms = parse(q ? q.value : '');
+    v.hideCyc = !!(cyc && cyc.checked);
+    return v;
   }
   return {
     push(id, rows) {
-      const w = bind(id);
-      if (!w) return;
-      const body = w.querySelector('tbody');
-      const follow = w.offsetParent ? atBottom(w) : w.dataset.follow !== '0';
+      const v = view(id);
+      if (!v) return;
+      const follow = v.w.offsetParent ? atBottom(v.w) : v.w.dataset.follow !== '0';
       const frag = document.createDocumentFragment();
       for (const r of rows) {
         const tr = document.createElement('tr');
-        tr.className = 'tr-' + r[8];
-        for (let i = 0; i < 8; i++) {
+        tr.className = 'tr-' + r[9];
+        for (let i = 0; i < 9; i++) {
           const td = document.createElement('td');
           td.textContent = r[i];
+          if (i === 8 && r[i]) td.title = r[i];
           tr.appendChild(td);
         }
+        tr.dataset.cyc = r[10] ? '1' : '0';
+        tr.dataset.hay = r.slice(0, 9).join(' ').toLowerCase();
+        if (!matches(v, tr)) tr.classList.add('tr-hidden');
+        (r[10] ? v.cyclic : v.events).push(tr);
         frag.appendChild(tr);
       }
-      body.appendChild(frag);
-      while (body.rows.length > MAX) body.deleteRow(0);
-      empty(id, body);
-      if (follow) { w.scrollTop = w.scrollHeight; hint(id, false); } else hint(id, true);
+      v.body.appendChild(frag);
+      for (const q of [v.events, v.cyclic]) while (q.length > MAX) q.shift().remove();
+      count(id);
+      if (follow) { v.w.scrollTop = v.w.scrollHeight; hint(id, false); } else hint(id, true);
+    },
+    filter(id) {
+      const v = view(id);
+      if (!v) return;
+      const q = el(id + '-q'), cyc = el(id + '-cyc');
+      v.terms = parse(q ? q.value : '');
+      v.hideCyc = !!(cyc && cyc.checked);
+      store('j1939.traffic.q', q ? q.value : '');
+      store('j1939.traffic.hideCyc', v.hideCyc ? '1' : '0');
+      for (const tr of v.body.rows) tr.classList.toggle('tr-hidden', !matches(v, tr));
+      count(id);
+      if (v.w.dataset.follow !== '0') v.w.scrollTop = v.w.scrollHeight;
     },
     clear(id) {
-      const w = bind(id);
-      if (!w) return;
-      const body = w.querySelector('tbody');
-      body.replaceChildren();
-      empty(id, body);
+      const v = view(id);
+      if (!v) return;
+      v.body.replaceChildren();
+      v.events = []; v.cyclic = [];
+      count(id);
       hint(id, false);
     },
     bottom(id) {
-      const w = bind(id);
-      if (!w) return;
-      w.dataset.follow = '1';
-      w.scrollTop = w.scrollHeight;
+      const v = view(id);
+      if (!v) return;
+      v.w.dataset.follow = '1';
+      v.w.scrollTop = v.w.scrollHeight;
       hint(id, false);
     },
     shown(id) {
-      const w = bind(id);
-      if (w && w.dataset.follow !== '0') this.bottom(id);
+      const v = view(id);
+      if (v && v.w.dataset.follow !== '0') this.bottom(id);
     },
   };
 })();
@@ -687,31 +758,37 @@ window.j1939Traffic = (() => {
 """ % TRAFFIC_ROWS
 
 
-def _traffic_row(e: TrafficEntry) -> list[str]:
-    """[time, dir, CAN ID, PGN, SA, DA, type, data, css class] for one traffic entry."""
+def _traffic_row(e: TrafficEntry) -> list[Any]:
+    """[time, dir, CAN ID, PGN, SA, DA, type, data, decoded, css class, cyclic] for one entry."""
     stamp = time.strftime("%H:%M:%S", time.localtime(e.at)) + f".{int(e.at * 1000) % 1000:03d}"
     if e.arb_id is None:  # bus error summary
-        return [stamp, "", "", "", "", "", e.kind, e.text, "err"]
+        return [stamp, "", "", "", "", "", e.kind, "", e.text, "err", 0]
     _prio, pgn, sa, da = split_id(e.arb_id)
     failed = e.direction == "TX!"
+    name = pgn_name(pgn)
+    meaning = decode(e.arb_id, e.data)
+    if e.text:  # the last TP.DT of a transfer carries the whole reassembled message
+        meaning = f"{meaning} -> {e.text}" if meaning else e.text
     return [
         stamp,
         "TX" if failed else e.direction,
         f"{e.arb_id:08X}",
-        str(pgn),
+        f"{pgn} {name}" if name else str(pgn),
         f"{sa:02X}",
         f"{da:02X}",
         e.kind,
         e.data.hex(" ").upper() + ("  (send failed)" if failed else ""),
+        meaning,
         "err" if failed else e.direction.lower(),
+        1 if e.cyclic else 0,
     ]
 
 
 def build_traffic_pane(session) -> Callable[[], None]:
-    """Traffic tab: live J1939 frames (TX and RX) from the session trace.
+    """Traffic tab: live J1939 frames (TX and RX) from the session trace, decoded and filterable.
 
-    PAUSE and CLEAR only affect this view; the ECU, the bus and the trace keep running.
-    Returns a callback for when the tab is shown (scrolls to the newest frame if following).
+    PAUSE, CLEAR and the filter only affect this view; the ECU, the bus and the trace keep
+    running. Returns a callback for when the tab is shown (scrolls to the newest frame).
     """
     ui.add_body_html(_TRAFFIC_JS)
     with ui.element("div").classes("card traffic-card"):
@@ -723,7 +800,8 @@ def build_traffic_pane(session) -> Callable[[], None]:
                     "font-size:14px;font-weight:700;text-transform:uppercase;"
                 )
                 ui.label(
-                    f"Every frame sent and received, newest at the bottom · last {TRAFFIC_ROWS} frames"
+                    f"Every frame sent and received, decoded from the bytes on the wire · "
+                    f"last {TRAFFIC_ROWS} cyclic + last {TRAFFIC_ROWS} other frames"
                 ).classes("font-mono").style("font-size:11px;color:#5B6775;")
             with ui.row().classes("items-center gap-2"):
                 status = ui.label("● LIVE").classes("traffic-status live font-mono")
@@ -733,23 +811,38 @@ def build_traffic_pane(session) -> Callable[[], None]:
                 btn_clear = ui.button("Clear").classes("action-btn btn-restart font-mono").props(
                     "unelevated dense"
                 )
+                btn_export = ui.button("Export").classes("action-btn btn-restart font-mono").props(
+                    "unelevated dense"
+                ).tooltip(
+                    "Save the frames in memory as a candump log (all frames, filter not applied): "
+                    "replay with canplayer, open in SavvyCAN or Wireshark"
+                )
         head = "".join(f"<th>{c}</th>" for c in _TRAFFIC_COLUMNS)
+        tid = _TRAFFIC_ID
         ui.html(
+            f'<div class="traffic-filter font-mono">'
+            f'<input id="{tid}-q" class="traffic-q" type="search" spellcheck="false" '
+            f'placeholder="Filter: 65260   sa:F9   type:request   -tp.dt" title="{_FILTER_HELP}" '
+            f"oninput=\"j1939Traffic.filter('{tid}')\">"
+            f'<label class="traffic-chk"><input id="{tid}-cyc" type="checkbox" '
+            f"onchange=\"j1939Traffic.filter('{tid}')\"> Hide cyclic (EEC1, CCVS, VD, HOURS)</label>"
+            f'<span id="{tid}-count" class="traffic-count"></span>'
+            f"</div>"
             f'<div class="traffic-box">'
-            f'<div id="{_TRAFFIC_ID}" class="traffic-wrap">'
+            f'<div id="{tid}" class="traffic-wrap">'
             f'<table class="traffic-table"><thead><tr>{head}</tr></thead><tbody></tbody></table>'
-            f'<div id="{_TRAFFIC_ID}-empty" class="traffic-empty">'
+            f'<div id="{tid}-empty" class="traffic-empty">'
             f"No traffic yet. Press START to see the frames on the bus.</div>"
             f"</div>"
-            f'<button id="{_TRAFFIC_ID}-new" class="traffic-new font-mono" style="display:none" '
-            f"onclick=\"j1939Traffic.bottom('{_TRAFFIC_ID}')\">&darr; New messages</button>"
+            f'<button id="{tid}-new" class="traffic-new font-mono" style="display:none" '
+            f"onclick=\"j1939Traffic.bottom('{tid}')\">&darr; New messages</button>"
             f"</div>",
             sanitize=False,
         ).classes("w-full")
 
     view: dict[str, Any] = {"trace": None, "seq": 0, "paused": False, "paused_seq": 0}
 
-    def push(rows: list[list[str]]) -> None:
+    def push(rows: list[list[Any]]) -> None:
         ui.run_javascript(f"j1939Traffic.push('{_TRAFFIC_ID}', {json.dumps(rows)})")
 
     def refresh() -> None:
@@ -763,7 +856,7 @@ def build_traffic_pane(session) -> Callable[[], None]:
         last, entries = trace.traffic_since(view["seq"])
         view["seq"] = last
         if entries:
-            push([_traffic_row(e) for e in entries[-TRAFFIC_ROWS:]])
+            push([_traffic_row(e) for e in entries[-2 * TRAFFIC_ROWS:]])
 
     def on_pause() -> None:
         view["paused"] = not view["paused"]
@@ -785,10 +878,30 @@ def build_traffic_pane(session) -> Callable[[], None]:
             view["trace"], view["seq"] = trace, now_seq
             if missed > 0:
                 stamp = time.strftime("%H:%M:%S")
-                push([[stamp, "", "", "", "", "", "PAUSED", f"{missed} frames not shown while paused", "gap"]])
+                push([[stamp, "", "", "", "", "", "PAUSED", "",
+                       f"{missed} frames not shown while paused", "gap", 0]])
+
+    def on_export() -> None:
+        trace = session.trace
+        if trace is None:
+            ui.notify("No traffic yet: press START first.", type="warning")
+            return
+        path = trace_dir() / time.strftime("traffic-%Y%m%d-%H%M%S.log")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            n = trace.export_candump(path)
+        except OSError as exc:
+            ui.notify(f"Export failed: {exc}", type="negative")
+            return
+        if n == 0:
+            ui.notify("No frames to export.", type="warning")
+            return
+        ui.download(path)
+        ui.notify(f"Exported {n} frames (candump log): {path}", type="positive")
 
     btn_pause.on_click(on_pause)
     btn_clear.on_click(lambda: ui.run_javascript(f"j1939Traffic.clear('{_TRAFFIC_ID}')"))
+    btn_export.on_click(on_export)
     ui.timer(0.25, refresh)
     return lambda: ui.run_javascript(f"j1939Traffic.shown('{_TRAFFIC_ID}')")
 

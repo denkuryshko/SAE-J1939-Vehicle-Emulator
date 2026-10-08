@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 IDLE_RPM = 650.0
+# Exact (international mile); J1939 carries km and km/h, the GUI shows miles.
+KM_PER_MI = 1.609344
 # Engine Speed at or above this means the engine is running (follows the ignition switch).
 RUNNING_RPM = 600.0
 
@@ -171,7 +173,7 @@ def encode_eec1(state: SignalState) -> bytes:
 
 def encode_ccvs(state: SignalState) -> bytes:
     """CCVS PGN 65265 — SPN 84 wheel-based speed; other SPNs not available."""
-    kmh = state.broadcast_speed_mph * 1.60934
+    kmh = state.broadcast_speed_mph * KM_PER_MI
     raw_speed = min(65535, max(0, round(kmh * 256)))
     return bytes(
         [
@@ -189,7 +191,7 @@ def encode_ccvs(state: SignalState) -> bytes:
 
 def encode_vd(state: SignalState) -> bytes:
     """VD PGN 65248 — bytes 1-4 trip (SPN 244, not available), bytes 5-8 total (SPN 245), 0.125 km/bit."""
-    dist_km = state.spn245_total_mi * 1.60934
+    dist_km = state.spn245_total_mi * KM_PER_MI
     raw_dist = round(dist_km / 0.125)
     return bytes(
         [

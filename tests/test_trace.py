@@ -4,7 +4,27 @@ import can
 
 from j1939_emulator.bus.detect import DetectedChannel, EmulationMode
 from j1939_emulator.bus.session import EmulatorSession
-from j1939_emulator.bus.trace import TRAFFIC_ROWS, J1939Trace, describe, frame_type, split_id
+from j1939_emulator.bus.trace import (
+    TRAFFIC_ROWS,
+    J1939Trace,
+    decode,
+    decode_payload,
+    describe,
+    frame_type,
+    split_id,
+)
+from j1939_emulator.diagnostics import DiagnosticState, encode_dm1
+from j1939_emulator.pgn import (
+    CAN_ID_CCVS,
+    CAN_ID_EEC1,
+    CAN_ID_HOURS,
+    CAN_ID_VD,
+    SignalState,
+    encode_ccvs,
+    encode_eec1,
+    encode_hours,
+    encode_vd,
+)
 
 
 def test_split_id_pdu1_and_pdu2():
@@ -87,7 +107,11 @@ def test_traffic_ring_keeps_cyclic_out_of_the_file(tmp_path):
     for _ in range(TRAFFIC_ROWS + 5):
         trace.broadcast(0x0CF00400, bytes(8), ok=True)
     _last, entries = trace.traffic_since(0)
-    assert len(entries) == TRAFFIC_ROWS  # oldest dropped first
+    # Cyclic frames are capped on their own (oldest dropped first); the request stays.
+    assert len(entries) == TRAFFIC_ROWS + 1
+    assert sum(e.cyclic for e in entries) == TRAFFIC_ROWS
+    assert [e.kind for e in entries if not e.cyclic] == ["REQUEST"]
+    assert [e.seq for e in entries] == sorted(e.seq for e in entries)
     trace.close("STOP")
     assert "0CF00400" not in trace.path.read_text(encoding="utf-8")
 
@@ -112,3 +136,56 @@ def test_session_traffic_includes_cyclic_and_requests():
     assert ("TX", 0x0CF00400, "BROADCAST") in kinds  # EEC1, cyclic
     assert ("RX", 0x18EA00F9, "REQUEST") in kinds
     assert ("TX", 0x18ECFF00, "TP.CM BAM") in kinds  # the VIN reply
+
+
+def test_decode_reads_back_the_encoders():
+    s = SignalState(spn190_rpm=800, spn84_speed_mph=35, spn245_total_mi=248912.4,
+                    spn247_engine_hours=10000.05)
+    assert decode(CAN_ID_EEC1, encode_eec1(s)) == "SPN 190 Engine Speed: 800 rpm"
+    assert decode(CAN_ID_CCVS, encode_ccvs(s)) == "SPN 84 Wheel-Based Speed: 35 mph (56.33 km/h)"
+    assert decode(CAN_ID_VD, encode_vd(s)).startswith("SPN 245 Total Distance: 248912.4 mi")
+    assert decode(CAN_ID_HOURS, encode_hours(s)) == "SPN 247 Engine Hours: 10000.05 h"
+
+
+def test_decode_special_values_and_protocol_frames():
+    assert decode(CAN_ID_EEC1, bytes([0xFF] * 8)) == "SPN 190 Engine Speed: not available"
+    assert decode(CAN_ID_EEC1, bytes([0xFF, 0xFF, 0xFF, 0x00, 0xFE, 0xFF, 0xFF, 0xFF])) == (
+        "SPN 190 Engine Speed: error"
+    )
+    assert decode(0x18EA00F9, bytes([0xEC, 0xFE, 0x00])) == "Request for PGN 65260 (VI (VIN))"
+    assert decode(0x18FF1200, bytes(8)) == ""  # unknown proprietary PGN
+
+
+def test_decode_dm1():
+    assert decode_payload(65226, encode_dm1(DiagnosticState())) == "DM1: no active DTCs; lamps off"
+    assert decode_payload(65226, encode_dm1(DiagnosticState(True, False))) == (
+        "DM1: SPN 110 / FMI 3 (OC 1); lamps AWL"
+    )
+    assert decode_payload(65226, encode_dm1(DiagnosticState(True, True))) == (
+        "DM1: SPN 110 / FMI 3 (OC 1), SPN 190 / FMI 0 (OC 1); lamps RSL+AWL"
+    )
+
+
+def test_last_tp_dt_carries_the_decoded_message(tmp_path):
+    trace = J1939Trace(0x00, ["header"], directory=tmp_path)
+    trace.frame("TX", 0x18ECFF00, bytes([0x20, 18, 0, 3, 0xFF, 0xEC, 0xFE, 0]))
+    for seq, chunk in enumerate((b"1HTMMAA", b"L5GH123", b"456*\xff\xff\xff"), start=1):
+        trace.frame("TX", 0x1CEBFF00, bytes([seq]) + chunk)
+    _last, entries = trace.traffic_since(0)
+    assert [e.text for e in entries[:-1]] == ["", "", ""]
+    assert entries[-1].text == "complete PGN 65260 (VI (VIN)): VIN 1HTMMAAL5GH123456 (17 chars)"
+    trace.close("STOP")
+
+
+def test_export_candump(tmp_path):
+    trace = J1939Trace(0x00, ["header"], directory=tmp_path)
+    trace.broadcast(0x0CF00400, bytes([0xFF, 0xFF, 0xFF, 0x00, 0x19, 0xFF, 0xFF, 0xFF]), ok=True)
+    trace.broadcast(0x0CF00400, bytes(8), ok=False)  # failed send: not on the bus, left out
+    trace.frame("RX", 0x18EA00F9, bytes([0xEC, 0xFE, 0x00]))
+    out = tmp_path / "dump.log"
+    assert trace.export_candump(out) == 2
+    lines = out.read_text(encoding="ascii").splitlines()
+    assert lines[0].endswith(" can0 0CF00400#FFFFFF0019FFFFFF")
+    assert lines[1].endswith(" can0 18EA00F9#ECFE00")
+    assert lines[0].startswith("(") and ") can0 " in lines[0]
+    trace.close("STOP")

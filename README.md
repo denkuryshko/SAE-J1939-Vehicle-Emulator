@@ -226,12 +226,18 @@ If the ELD keeps repeating the request, answers with a TP.CM Abort, or sends a C
 
 ### Traffic monitor
 
-The **Traffic** tab shows every frame on the bus as it happens, including the cyclic EEC1 / CCVS / VD / HOURS broadcasts that the trace file leaves out. One row per frame: time, direction (TX / RX), CAN ID, PGN, source and destination address, type (BROADCAST, REQUEST, ACK / NACK, ADDRESS CLAIM, TP.CM BAM / RTS / CTS / EOMA / ABORT, TP.DT, ERROR) and the raw data bytes.
+The **Traffic** tab shows every frame on the bus as it happens, including the cyclic EEC1 / CCVS / VD / HOURS broadcasts that the trace file leaves out. One row per frame: time, direction (TX / RX), CAN ID, PGN, source and destination address, type (BROADCAST, REQUEST, ACK / NACK, ADDRESS CLAIM, TP.CM BAM / RTS / CTS / EOMA / ABORT, TP.DT, ERROR), the raw data bytes and a **Decoded** column.
+
+**Decoded** is read back from the bytes on the wire, not from the GUI settings, so it shows what an ELD actually receives: `SPN 190 Engine Speed: 800 rpm`, `SPN 84 Wheel-Based Speed: 35 mph (56.33 km/h)`, `SPN 245 Total Distance: 248912.4 mi (…km)`, `SPN 247 Engine Hours: 10000.05 h`, DM1 faults and lamps (`DM1: SPN 110 / FMI 3 (OC 1); lamps AWL`), requests, ACK / NACK, address claims and transport frames. The last TP.DT of a transfer also shows the whole reassembled message (`VIN 1HTMMAAL5GH123456`). J1939 special values come out as `not available` (0xFF…) or `error` (0xFE…).
+
+**Filter** narrows the view as you type. Words separated by spaces must all match anywhere in the row; `-word` hides rows that contain it. Field filters: `pgn:65260`, `sa:F9`, `da:00`, `id:18EA`, `type:request`, `dir:rx`. Examples: `sa:f9` (everything the ELD sent), `type:request`, `-tp.dt -address`. **Hide cyclic** hides the EEC1 / CCVS / VD / HOURS broadcasts so requests and replies stand out. The filter and the checkbox are remembered in the browser; the counter shows how many frames match.
+
+**Export** saves the frames in memory as a candump log (`(time) can0 18EA00F9#ECFE00`), all of them whatever the filter, to the traces folder and as a browser download. Replay it with `canplayer`, or open it in SavvyCAN or Wireshark.
 
 - The newest frame is at the bottom and the view follows it. Scroll up to read older frames and it stays put; **↓ New messages** jumps back to the newest.
 - **Pause** freezes the view only (it shows **PAUSED**). The ECU keeps sending and answering. **Resume** continues from the newest frame and notes how many frames went by unseen.
 - **Clear** empties the view only. The ECU, the counters and the trace file are not touched.
-- The view keeps the last 1000 frames, dropping the oldest first. At EEC1's 20 ms cycle that is roughly the last 15–20 seconds.
+- The view keeps the last 1000 cyclic broadcasts and, separately, the last 1000 other frames, dropping the oldest first. The cyclic ones cover roughly the last 15–20 seconds at EEC1's 20 ms cycle; requests, replies and transport frames stay much longer, because the broadcasts can no longer push them out.
 
 ### Bus modes
 

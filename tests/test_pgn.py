@@ -22,14 +22,14 @@ def test_eec1_engine_speed_bytes_4_5_and_rest_not_available():
 
 def test_ccvs_speed_is_km_per_h_times_256():
     data = encode_ccvs(SignalState(spn84_speed_mph=60))
-    assert int.from_bytes(data[1:3], "little") == round(60 * 1.60934 * 256)
+    assert int.from_bytes(data[1:3], "little") == round(60 * 1.609344 * 256)
     assert data[0] == 0xFF and data[3:] == b"\xff" * 5
 
 
 def test_vd_total_distance_in_bytes_5_8_trip_not_available():
     data = encode_vd(SignalState(spn245_total_mi=1000))
     assert data[:4] == b"\xff" * 4
-    assert int.from_bytes(data[4:], "little") == round(1000 * 1.60934 / 0.125)
+    assert int.from_bytes(data[4:], "little") == round(1000 * 1.609344 / 0.125)
 
 
 def test_hours_spn247_0_05_h_per_bit():
