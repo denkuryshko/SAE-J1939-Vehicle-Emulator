@@ -17,8 +17,9 @@ manufacturer_code = 0
 identity_number = 0
 
 [vehicle]
-vin = "1HTMMAAL7GH123456"
+vin = "1HTMMAAL7HF251808"
 persist_meters = true    # keep odometer / engine hours per VIN between runs
+ignition = "run"         # "run" = engine running | "on" = key ON, engine off (0 rpm / 0 mph)
 
 [diagnostics]
 dtc_spn110_fmi3 = false

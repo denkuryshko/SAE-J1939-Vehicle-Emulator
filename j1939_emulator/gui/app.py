@@ -28,7 +28,9 @@ from j1939_emulator.gui.widgets import (
     build_ccvs,
     build_diagnostics_pane,
     build_ecu_pane,
+    build_logs_pane,
     build_eec1,
+    build_ignition,
     build_hours,
     build_vd,
 )
@@ -339,6 +341,10 @@ def _build_page(state: GuiState) -> None:
                     ui.label("Diagnostics (2 DTCs)")
                     diag_tab_pill = ui.label("2 Supported").classes("tab-pill")
                     state.ui_refs["diag_tab_pill"] = diag_tab_pill
+                tab_logs = ui.button().classes("tab-btn").props("flat dense")
+                with tab_logs:
+                    ui.label("Logs")
+                    logs_tab_pill = ui.label("0 Requests").classes("tab-pill")
 
             pane_signals = ui.element("section")
             with pane_signals:
@@ -352,6 +358,7 @@ def _build_page(state: GuiState) -> None:
                 state.payload_labels.clear()
                 sig.clear_listeners()
 
+                build_ignition(sig)
                 build_eec1(sig, state.payload_labels)
                 build_ccvs(sig, state.payload_labels)
                 build_vd(sig, state.payload_labels)
@@ -366,6 +373,11 @@ def _build_page(state: GuiState) -> None:
             with pane_diag:
                 build_diagnostics_pane(session, state.ui_refs)
             pane_diag.set_visibility(False)
+
+            pane_logs = ui.element("section")
+            with pane_logs:
+                build_logs_pane(session)
+            pane_logs.set_visibility(False)
 
         with ui.element("footer").classes("j1939-footer"):
             with ui.element("div").classes("footer-left font-mono"):
@@ -564,10 +576,12 @@ def _build_page(state: GuiState) -> None:
         pane_signals.set_visibility(name == "signals")
         pane_ecu.set_visibility(name == "ecu")
         pane_diag.set_visibility(name == "diagnostics")
+        pane_logs.set_visibility(name == "logs")
         for btn, key in (
             (tab_signals, "signals"),
             (tab_ecu, "ecu"),
             (tab_diag, "diagnostics"),
+            (tab_logs, "logs"),
         ):
             btn.classes(remove="active")
             if key == name:
@@ -577,6 +591,8 @@ def _build_page(state: GuiState) -> None:
 
     def update_chrome() -> None:
         st = session.stats()
+        n_requests = len(session.recent_requests())
+        logs_tab_pill.set_text(f"{n_requests} Request{'' if n_requests == 1 else 's'}")
         if st.running:
             health_text = BUS_HEALTH_TEXT.get(st.bus_health)
             if health_text is None:
@@ -659,6 +675,7 @@ def _build_page(state: GuiState) -> None:
     tab_signals.on_click(lambda: switch_tab("signals"))
     tab_ecu.on_click(lambda: switch_tab("ecu"))
     tab_diag.on_click(lambda: switch_tab("diagnostics"))
+    tab_logs.on_click(lambda: switch_tab("logs"))
 
     ui.timer(0.2, update_chrome)
 

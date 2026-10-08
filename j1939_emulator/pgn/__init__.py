@@ -5,10 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+IDLE_RPM = 650.0
+
 
 @dataclass
 class SignalState:
     """Runtime SPN values for the broadcast PGNs (EEC1, CCVS, VD, HOURS)."""
+
+    # Ignition: False = key ON, engine off. The ECU stays on the bus and answers requests, but
+    # broadcasts 0 rpm / 0 mph and the meters stand still; the rpm / speed settings are kept for
+    # when the engine is started again.
+    engine_running: bool = True
 
     # EEC1
     spn190_rpm: float = 0.0
@@ -44,14 +51,30 @@ class SignalState:
         for cb in list(self._listeners):
             cb()
 
+    def set_ignition(self, running: bool) -> None:
+        """Ignition switch: engine running starts at idle, key ON / engine off drops to 0 rpm."""
+        self.engine_running = running
+        self.spn190_rpm = IDLE_RPM if running else 0.0
+        self.notify()
+
+    @property
+    def broadcast_rpm(self) -> float:
+        """Engine speed actually sent: 0 while the engine is off."""
+        return self.spn190_rpm if self.engine_running else 0.0
+
+    @property
+    def broadcast_speed_mph(self) -> float:
+        """Vehicle speed actually sent: 0 while the engine is off."""
+        return self.spn84_speed_mph if self.engine_running else 0.0
+
     def advance_meters(self, dt_s: float) -> None:
         """Advance engine hours (while rpm > 0) and odometer (by vehicle speed) over dt_s seconds."""
         if dt_s <= 0:
             return
-        if self.spn190_rpm > 0:
+        if self.broadcast_rpm > 0:
             self.spn247_engine_hours += dt_s / 3600.0
-        if self.spn84_speed_mph > 0:
-            self.spn245_total_mi += self.spn84_speed_mph * dt_s / 3600.0
+        if self.broadcast_speed_mph > 0:
+            self.spn245_total_mi += self.broadcast_speed_mph * dt_s / 3600.0
 
     def set_spn(self, key: str, value: object) -> None:
         """Set a known SPN field by dotted or flat key and notify listeners."""
@@ -80,6 +103,8 @@ class SignalState:
     @staticmethod
     def _spn_attr(key: str) -> str:
         mapping = {
+            "engine_running": "engine_running",
+            "engine.running": "engine_running",
             "eec1.spn190_rpm": "spn190_rpm",
             "spn190_rpm": "spn190_rpm",
             "ccvs.spn84_speed_mph": "spn84_speed_mph",
@@ -115,7 +140,7 @@ CAN_ID_HOURS = 0x18FEE500
 
 def encode_eec1(state: SignalState) -> bytes:
     """EEC1 PGN 61444 — SPN 190 engine speed; other SPNs not available."""
-    raw_rpm = min(65535, max(0, round(state.spn190_rpm / 0.125)))
+    raw_rpm = min(65535, max(0, round(state.broadcast_rpm / 0.125)))
     return bytes(
         [
             0xFF,
@@ -132,7 +157,7 @@ def encode_eec1(state: SignalState) -> bytes:
 
 def encode_ccvs(state: SignalState) -> bytes:
     """CCVS PGN 65265 — SPN 84 wheel-based speed; other SPNs not available."""
-    kmh = state.spn84_speed_mph * 1.60934
+    kmh = state.broadcast_speed_mph * 1.60934
     raw_speed = min(65535, max(0, round(kmh * 256)))
     return bytes(
         [

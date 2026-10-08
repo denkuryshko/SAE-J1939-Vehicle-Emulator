@@ -75,6 +75,7 @@ def load_config(path: str | Path) -> AppConfig:
     _apply_pgn(signals, raw.get("pgn", {}).get("ccvs"), "ccvs")
     _apply_pgn(signals, raw.get("pgn", {}).get("vd"), "vd")
     _apply_pgn(signals, raw.get("pgn", {}).get("hours"), "hours")
+    signals.engine_running = _engine_running(raw.get("vehicle", {}) or {})
 
     identity = _load_identity(raw)
     diagnostics = _load_diagnostics(raw)
@@ -92,6 +93,17 @@ def load_config(path: str | Path) -> AppConfig:
         start_on_launch=start_on_launch,
         persist_meters=bool((raw.get("vehicle", {}) or {}).get("persist_meters", True)),
     )
+
+
+IGNITION_VALUES = {"run": True, "on": False}
+
+
+def _engine_running(vehicle: dict) -> bool:
+    """[vehicle] ignition: "run" (engine running, default) or "on" (key ON, engine off)."""
+    ignition = str(vehicle.get("ignition", "run")).strip().lower()
+    if ignition not in IGNITION_VALUES:
+        raise ValueError(f"Invalid vehicle.ignition {ignition!r}; expected 'run' or 'on'")
+    return IGNITION_VALUES[ignition]
 
 
 def _load_identity(raw: dict) -> EcuIdentity:

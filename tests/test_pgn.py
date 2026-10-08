@@ -61,3 +61,23 @@ def test_set_spn_rejects_unknown_key_and_bad_cycle():
         s.set_spn("eec1.spn513_torque_pct", 10)
     with pytest.raises(ValueError):
         s.set_spn("hours.cycle_ms", 0)
+
+
+def test_ignition_switch_sets_idle_or_zero_rpm():
+    s = SignalState(spn190_rpm=1250, engine_running=False)
+    s.set_ignition(True)
+    assert (s.engine_running, s.spn190_rpm) == (True, 650)
+    s.set_ignition(False)
+    assert (s.engine_running, s.spn190_rpm) == (False, 0)
+
+
+def test_key_on_engine_off_sends_zero_and_keeps_settings():
+    s = SignalState(spn190_rpm=650, spn84_speed_mph=60, spn247_engine_hours=10, spn245_total_mi=100)
+    s.set_spn("engine_running", "false")
+    assert encode_eec1(s) == encode_eec1(SignalState())
+    assert encode_ccvs(s) == encode_ccvs(SignalState())
+    s.advance_meters(3600)
+    assert (s.spn247_engine_hours, s.spn245_total_mi) == (10, 100)
+
+    s.set_spn("engine_running", True)
+    assert encode_eec1(s) == encode_eec1(SignalState(spn190_rpm=650))

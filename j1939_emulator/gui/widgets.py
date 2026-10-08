@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 from nicegui import ui
 
+from j1939_emulator.ecu_identity import generate_vin, vin_check_digit_warning
 from j1939_emulator.pgn import (
     SignalState,
     encode_ccvs,
@@ -198,6 +200,49 @@ def meter_note(text: str) -> None:
     ui.label(text).style("font-size:11px;color:#5B6775;padding:0 12px 10px;")
 
 
+def engine_off_note(sig: SignalState, text: str) -> None:
+    """Warning shown in a card while the key is ON with the engine off."""
+    note = ui.label(text).style(
+        "font-size:11px;color:#B45309;background:#FFFBEB;padding:6px 12px;"
+        "border-bottom:1px solid #FDE68A;"
+    )
+    note.set_visibility(not sig.engine_running)
+    ui.timer(0.5, lambda: note.set_visibility(not sig.engine_running))
+
+
+def build_ignition(sig: SignalState) -> None:
+    """Key switch: key ON with the engine off, or engine running."""
+    with ui.element("div").classes("pgn-card"):
+        with ui.element("div").classes("pgn-header"):
+            with ui.element("div").classes("pgn-title-group"):
+                ui.label("KEY").classes("badge-acronym font-mono")
+                ui.label("Ignition").classes("pgn-name")
+            toggle = ui.toggle(
+                {"on": "Key ON · engine off", "run": "Engine running"},
+                value="run" if sig.engine_running else "on",
+            ).props("dense no-caps unelevated toggle-color=primary")
+        ui.label(
+            "Key ON, engine off: the ECU stays on the bus and answers requests (VIN, odometer, "
+            "engine hours), but sends 0 rpm and 0 mph and the meters stand still. "
+            "Switching sets Engine Speed to idle 650 rpm (engine running) or 0 rpm (key ON)."
+        ).style("font-size:11px;color:#5B6775;padding:8px 12px;")
+
+        def apply(e) -> None:
+            running = e.value == "run"
+            if running == sig.engine_running:
+                return
+            sig.set_ignition(running)  # also moves Engine Speed to idle / 0 rpm
+
+        toggle.on_value_change(apply)
+
+        def follow() -> None:
+            want = "run" if sig.engine_running else "on"
+            if toggle.value != want:  # changed outside this page (e.g. another browser tab)
+                toggle.value = want
+
+        ui.timer(0.5, follow)
+
+
 def build_eec1(sig: SignalState, payload_labels: dict) -> None:
     with ui.element("div").classes("pgn-card"):
         details = pgn_header(
@@ -210,11 +255,21 @@ def build_eec1(sig: SignalState, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["eec1"] = payload_strip(3, payload_hex(encode_eec1(sig)))
-        slider_spn(
+        engine_off_note(sig, "Engine off: sending 0 rpm. Starting the engine sets idle 650 rpm.")
+        sync_rpm = slider_spn(
             "SPN 190", "Engine Speed", "rpm", sig.spn190_rpm, 0, 3500, 25,
             _bind(sig, "spn190_rpm"),
             presets=[("0 rpm", 0), ("Idle 650", 650), ("Cruise 1250", 1250), ("Rated 2100", 2100)],
         )
+        shown = [sig.spn190_rpm]
+
+        def follow_rpm() -> None:
+            # The ignition switch (or another tab) changes rpm outside this slider.
+            if sig.spn190_rpm != shown[0]:
+                shown[0] = sig.spn190_rpm
+                sync_rpm(sig.spn190_rpm)
+
+        ui.timer(0.3, follow_rpm)
 
 
 def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
@@ -229,6 +284,7 @@ def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["ccvs"] = payload_strip(6, payload_hex(encode_ccvs(sig)))
+        engine_off_note(sig, "Engine off: sending 0 mph. This setting is used once the engine runs.")
         slider_spn(
             "SPN 84", "Wheel-Based Vehicle Speed", "mph", sig.spn84_speed_mph, 0, 120, 0.5,
             _bind(sig, "spn84_speed_mph"),
@@ -360,6 +416,9 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         btn_copy = ui.button("Copy").classes(
                             "action-btn btn-restart font-mono"
                         ).props("unelevated dense")
+                        btn_generate = ui.button("Generate").classes(
+                            "action-btn btn-restart font-mono"
+                        ).props("unelevated dense")
                     ui.label(
                         "Broadcast on START, when Set, and on Request "
                         "(PGN 59904) — PGN 65260 via BAM."
@@ -372,6 +431,8 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                             cleaned = session.set_vin(str(raw or ""))
                             vin_input.value = cleaned
                             ui.notify(f"VIN set to {cleaned}", type="positive")
+                            if warning := vin_check_digit_warning(cleaned):
+                                ui.notify(warning, type="warning")
                         except ValueError as exc:
                             ui.notify(str(exc), type="negative")
                             vin_input.value = identity.vin
@@ -384,8 +445,13 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         except Exception:
                             ui.notify(f"VIN: {text}", type="info")
 
+                    def on_generate() -> None:
+                        vin_input.value = generate_vin(identity.vin)
+                        ui.notify("New VIN generated — press Set to apply", type="info")
+
                     btn_set_vin.on_click(lambda: on_vin_change())
                     btn_copy.on_click(on_copy)
+                    btn_generate.on_click(on_generate)
 
             with ui.column().classes("gap-3"):
                 with ui.element("div").style(
@@ -425,6 +491,142 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                         ui.label(identity.name_hex).style(
                             "font-weight:700;color:#1F6FEB;"
                         )
+
+
+_REQUEST_COLUMNS = [
+    {"name": "time", "label": "Time", "field": "time", "align": "left"},
+    {"name": "src", "label": "From", "field": "src", "align": "left"},
+    {"name": "dest", "label": "To", "field": "dest", "align": "left"},
+    {"name": "pgn", "label": "PGN", "field": "pgn", "align": "left"},
+    {"name": "result", "label": "Result", "field": "result", "align": "left"},
+]
+
+
+def _request_rows(session) -> list[dict[str, Any]]:
+    rows = []
+    for i, ev in enumerate(reversed(session.recent_requests())):  # newest first
+        name = f" {ev.pgn_name}" if ev.pgn_name else ""
+        rows.append({
+            "id": i,
+            "time": time.strftime("%H:%M:%S", time.localtime(ev.at)) + f".{int(ev.at * 1000) % 1000:03d}",
+            "src": f"0x{ev.src:02X}",
+            "dest": "Global" if ev.dest == 0xFF else f"0x{ev.dest:02X}",
+            "pgn": f"{ev.pgn}{name}",
+            "result": ev.result or "pending",
+        })
+    return rows
+
+
+def build_logs_pane(session) -> None:
+    """Logs tab: incoming requests and the J1939 trace, for debugging an ELD on the bench."""
+    with ui.element("div").classes("card").style(
+        "display:flex;flex-direction:column;gap:16px;"
+    ):
+        with ui.column().classes("gap-0").style(
+            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
+        ):
+            ui.label("Logs").style(
+                "font-size:14px;font-weight:700;text-transform:uppercase;"
+            )
+            ui.label(
+                "Requests from other nodes and a decoded J1939 trace of each run"
+            ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+        build_request_log(session)
+        build_trace_view(session)
+
+
+def build_request_log(session) -> None:
+    """Requests (PGN 59904) from other nodes, e.g. an ELD asking for the VIN."""
+    with ui.element("div").style(
+        "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
+    ):
+        with ui.row().classes("w-full items-center justify-between"):
+            with ui.column().classes("gap-0"):
+                ui.label("Incoming Requests (PGN 59904)").style(
+                    "font-weight:700;font-size:11px;text-transform:uppercase;color:#1F2A37;"
+                )
+                ui.label(
+                    "Last 50 requests from other nodes and how this ECU answered, newest first."
+                ).style("font-size:11px;color:#5B6775;")
+            btn_clear = ui.button("Clear").classes(
+                "action-btn btn-restart font-mono"
+            ).props("unelevated dense")
+        table = ui.table(columns=_REQUEST_COLUMNS, rows=[], row_key="id").props(
+            "dense flat bordered hide-bottom"
+        ).classes("w-full font-mono").style("font-size:11px;margin-top:8px;")
+        empty = ui.label("No requests received yet.").classes("font-mono").style(
+            "font-size:11px;color:#5B6775;margin-top:6px;"
+        )
+
+    shown: list[dict[str, Any]] = []
+
+    def refresh() -> None:
+        rows = _request_rows(session)
+        if rows == shown:
+            return
+        shown[:] = rows
+        table.rows = rows
+        table.update()
+        table.set_visibility(bool(rows))
+        empty.set_visibility(not rows)
+
+    def on_clear() -> None:
+        session.clear_requests()
+        refresh()
+
+    btn_clear.on_click(on_clear)
+    table.set_visibility(False)
+    ui.timer(0.5, refresh)
+
+
+def build_trace_view(session) -> None:
+    """Live J1939 trace (also written to a file per START) for debugging an ELD on the bench."""
+    with ui.element("div").style(
+        "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
+    ):
+        with ui.row().classes("w-full items-center justify-between"):
+            with ui.column().classes("gap-0"):
+                ui.label("J1939 Trace").style(
+                    "font-weight:700;font-size:11px;text-transform:uppercase;color:#1F2A37;"
+                )
+                path_label = ui.label("Starts with START: requests, transport frames (BAM / RTS / CTS / "
+                                      "EOMA / Abort), replies, send and bus errors.").classes(
+                    "font-mono"
+                ).style("font-size:11px;color:#5B6775;word-break:break-all;")
+            btn_download = ui.button("Download").classes(
+                "action-btn btn-restart font-mono"
+            ).props("unelevated dense")
+        log = ui.log(max_lines=500).classes("w-full font-mono").style(
+            "height:320px;font-size:11px;margin-top:8px;background:#FFF;white-space:pre;"
+        )
+
+    view = {"trace": None, "count": 0}
+
+    def refresh() -> None:
+        trace = session.trace
+        if trace is None:
+            return
+        if trace is not view["trace"]:
+            view["trace"], view["count"] = trace, 0
+            log.clear()
+            path_label.set_text(f"File: {trace.path}" if trace.path else "File: not available (in-app only)")
+        count, lines = trace.recent()
+        new = count - view["count"]
+        if new <= 0:
+            return
+        for line in lines[-min(new, len(lines)):]:
+            log.push(line)
+        view["count"] = count
+
+    def on_download() -> None:
+        trace = session.trace
+        if trace is None or trace.path is None or not trace.path.exists():
+            ui.notify("No trace file yet: press START first.", type="warning")
+            return
+        ui.download(trace.path)
+
+    btn_download.on_click(on_download)
+    ui.timer(0.5, refresh)
 
 
 def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:

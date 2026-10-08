@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import heapq
 import threading
+from collections import deque
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -24,6 +25,7 @@ except Exception:
     pass
 
 from j1939_emulator.bus.detect import DetectedChannel, EmulationMode
+from j1939_emulator.bus.trace import J1939Trace, pgn_label
 from j1939_emulator.diagnostics import (
     DM1_CYCLE_MS,
     DM1_PDU_FORMAT,
@@ -69,6 +71,22 @@ _REQUESTABLE: dict[int, tuple[int, Callable[[SignalState], bytes]]] = {
     65265: (6, encode_ccvs),
     65248: (6, encode_vd),
     65253: (6, encode_hours),
+}
+# can-j1939 runs one BAM at a time per source; while one is on the bus, send_pgn() of another
+# multi-packet PGN returns False. Such replies wait in a queue that is retried on this tick.
+_TP_RETRY_S = 0.02
+# Give up on a queued reply after this long (well past J1939-21 Tr = 200 ms; ELDs retry anyway).
+_TP_RETRY_TIMEOUT_S = 1.25
+_REQUEST_LOG_SIZE = 50
+_PGN_ADDRESS_CLAIM = 60928
+_PGN_NAMES = {
+    PGN_VI: "VI (VIN)",
+    61444: "EEC1",
+    65265: "CCVS",
+    65248: "VD",
+    65253: "HOURS",
+    PGN_DM1: "DM1",
+    _PGN_ADDRESS_CLAIM: "Address Claim",
 }
 _USB_SETTLE_S = 0.50
 _JOIN_TIMEOUT_S = 3.0
@@ -137,6 +155,29 @@ class SessionStats:
     peers: int = 0
 
 
+@dataclass
+class RequestEvent:
+    """One Request (PGN 59904) seen on the bus and what the emulator did with it."""
+
+    at: float  # wall clock, time.time()
+    src: int
+    dest: int
+    pgn: int
+    result: str = ""
+
+    @property
+    def pgn_name(self) -> str:
+        return _PGN_NAMES.get(self.pgn, "")
+
+
+@dataclass
+class _PendingSend:
+    priority: int
+    payload_fn: Callable[[], bytes | list[int]]
+    queued_at: float
+    events: list[RequestEvent]
+
+
 @dataclass(order=True)
 class _HeapItem:
     next_t: float
@@ -202,6 +243,74 @@ class _BusHealthMonitor(can.Listener):
             if self._last_error >= cutoff:
                 return BusHealth.BUS_ERRORS, peers
             return BusHealth.OK, peers
+
+
+class _TolerantSendBus:
+    """The bus as can-j1939 sees it: a failed send is reported, not raised.
+
+    can-j1939 sends from its job thread (DM1 timer, BAM data packets, queued replies);
+    an exception there (e.g. candleLight "Send timeout" with nobody ACKing) kills that
+    thread, and the ECU silently stops sending DM1 and finishing BAMs until RESET.
+    """
+
+    def __init__(self, bus: can.BusABC, on_fail: Callable[[], None], trace: J1939Trace) -> None:
+        self._bus = bus
+        self._on_fail = on_fail
+        self._trace = trace
+
+    def send(self, msg: can.Message, timeout: float | None = None) -> None:
+        data = bytes(msg.data)
+        try:
+            self._bus.send(msg, timeout)
+        except can.CanError as exc:
+            self._on_fail()
+            self._trace.frame("TX!", msg.arbitration_id, data, f"send failed: {exc}")
+        else:
+            self._trace.frame("TX", msg.arbitration_id, data)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._bus, name)
+
+
+class _ReceivedOnly(can.Listener):
+    """Feeds can-j1939 only frames from other nodes, never the adapter's echo of our own TX.
+
+    candleLight echoes every sent frame back (is_rx=False) and ignores receive_own_messages.
+    can-j1939 takes the echo of its own Address Claimed for a contender with the same NAME
+    and claims again, and so on: a claim flood that runs as long as frames are ACKed.
+    """
+
+    def __init__(self, inner: can.Listener) -> None:
+        self._inner = inner
+
+    def on_message_received(self, msg: can.Message) -> None:
+        if msg.is_rx:
+            self._inner.on_message_received(msg)
+
+
+class _RequestSniffer(can.Listener):
+    """Logs Requests the session callback never sees: address claim and ones meant for other nodes."""
+
+    def __init__(self, own_sa: int, log: deque[RequestEvent]) -> None:
+        self._own_sa = own_sa & 0xFF
+        self._log = log
+
+    def on_message_received(self, msg: can.Message) -> None:
+        arb = msg.arbitration_id
+        if msg.is_error_frame or not msg.is_rx or not msg.is_extended_id:
+            return
+        if (arb >> 16) & 0x3FF != 0xEA or len(msg.data) < 3:  # DP=0, PF=0xEA
+            return
+        src, dest = arb & 0xFF, (arb >> 8) & 0xFF
+        pgn = int.from_bytes(bytes(msg.data[:3]), "little")
+        for_us = dest in (self._own_sa, _GLOBAL_ADDRESS)
+        if for_us and pgn == _PGN_ADDRESS_CLAIM:
+            result = "answered (address claim)"
+        elif not for_us:
+            result = f"not for this ECU (to 0x{dest:02X})"
+        else:
+            return  # handled and logged by EmulatorSession._on_request
+        self._log.append(RequestEvent(time.time(), src, dest, pgn, result))
 
 
 class _PgnScheduler(threading.Thread):
@@ -411,6 +520,13 @@ class EmulatorSession:
     )
     _meters: _MeterThread | None = field(default=None, init=False, repr=False)
     _health: _BusHealthMonitor | None = field(default=None, init=False, repr=False)
+    _pending: dict[tuple[int, int], _PendingSend] = field(default_factory=dict, init=False, repr=False)
+    _pending_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _requests: deque[RequestEvent] = field(
+        default_factory=lambda: deque(maxlen=_REQUEST_LOG_SIZE), init=False, repr=False
+    )
+    # Current trace while running; the last one stays readable after STOP.
+    _trace: J1939Trace | None = field(default=None, init=False, repr=False)
 
     @property
     def running(self) -> bool:
@@ -474,6 +590,18 @@ class EmulatorSession:
             self._stop_locked()
         # Also covers values set by hand while stopped (GUI QUIT / CLI quit call stop()).
         self.save_meters()
+
+    @property
+    def trace(self) -> J1939Trace | None:
+        """J1939 trace of the current (or last) run: requests, transport frames, errors."""
+        return self._trace
+
+    def recent_requests(self) -> list[RequestEvent]:
+        """Requests received from other nodes, oldest first (last 50, kept across STOP/START)."""
+        return list(self._requests)
+
+    def clear_requests(self) -> None:
+        self._requests.clear()
 
     def save_meters(self) -> None:
         if self.persist_meters:
@@ -554,9 +682,16 @@ class EmulatorSession:
             self._ecu = None
             self._bus = None
             raise
+        listeners = self._ecu._notifier.listeners
+        listeners[:] = [_ReceivedOnly(listener) for listener in listeners]
         self._health = _BusHealthMonitor(self.identity.source_address)
         # can-j1939 owns the bus Notifier; piggyback on it to see error frames and peer traffic.
         self._ecu._notifier.add_listener(self._health)
+        self._trace = J1939Trace(self.identity.source_address, self._trace_header(channel))
+        # First listener, so a request is traced before the reply can-j1939 sends while handling it.
+        self._ecu._notifier.listeners.insert(0, self._trace)
+        self._ecu._bus = _TolerantSendBus(self._bus, self._health.tx_failed, self._trace)
+        self._ecu._notifier.add_listener(_RequestSniffer(self.identity.source_address, self._requests))
 
         name = Name(value=int(self.identity.name))
         self._ca = ControllerApplication(
@@ -582,10 +717,33 @@ class EmulatorSession:
         self._start_scheduler_locked()
         self._meters = _MeterThread(self.signals, self.save_meters if self.persist_meters else None)
         self._meters.start()
+        self._ca.add_timer(_TP_RETRY_S, self._flush_pending)
         self._broadcast_vin_locked()
         # DM1 goes out every second even with no faults (J1939-73), so an ELD sees faults clear.
         self._send_dm1()
         self._ca.add_timer(DM1_CYCLE_MS / 1000.0, self._dm1_tick)
+
+    def _trace_header(self, channel: DetectedChannel) -> list[str]:
+        ident = self.identity
+        return [
+            f"j1939-emulator trace, started {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"channel={channel.label!r} interface={channel.interface} bitrate={self.bitrate}",
+            f"ECU SA=0x{ident.source_address:02X} NAME={ident.name_hex} VIN={ident.vin}",
+            "Logged: frames from other nodes, everything this ECU sends except the cyclic "
+            "EEC1/CCVS/VD/HOURS broadcasts, how each request was answered, bus errors.",
+            "TX! = send failed. Times are PC clock; delta is the gap to the previous line.",
+        ]
+
+    def _resolve(self, event: RequestEvent | None, result: str) -> None:
+        """Record what happened to a request, in the request log and the trace."""
+        if event is None:
+            return
+        event.result = result
+        if self._trace is not None:
+            self._trace.note(
+                f"request from 0x{event.src:02X} to 0x{event.dest:02X} for PGN "
+                f"{pgn_label(event.pgn)}: {result}"
+            )
 
     def _wait_claim_locked(self, timeout_s: float) -> None:
         deadline = time.monotonic() + timeout_s
@@ -604,56 +762,107 @@ class EmulatorSession:
             )
 
     def _broadcast_vin_locked(self) -> None:
-        if self._ca is None:
-            return
-        payload = self.identity.vin_payload()
-        self._ca.send_pgn(0, VI_PDU_FORMAT, VI_PDU_SPECIFIC, VI_PRIORITY, payload)
-        # BAM uses multiple frames; count as one logical TX
-        self._on_tx()
+        self._send(VI_PDU_FORMAT, VI_PDU_SPECIFIC, VI_PRIORITY, self.identity.vin_payload)
 
-    def _on_request(self, src_address: int, dest_address: int, pgn: int) -> None:
-        """Answer Request (PGN 59904) for VIN and the cyclic PGNs.
+    def _send(
+        self,
+        pdu_format: int,
+        pdu_specific: int,
+        priority: int,
+        payload_fn: Callable[[], bytes | list[int]],
+        event: RequestEvent | None = None,
+        done: str = "answered",
+    ) -> None:
+        """Send a PGN now, or queue it while another BAM holds can-j1939's transport slot.
 
-        Called from the can-j1939 receive thread; deliberately does not take
-        the session lock so STOP (which holds it while joining) cannot deadlock.
+        A BAM counts as one logical TX. Queued replies are encoded again when they go out,
+        so they carry current data; a second request for a queued PGN joins that reply.
         """
         ca = self._ca
         if not self._running or ca is None:
             return
-        s = self.signals
-        try:
-            if pgn == PGN_VI:
-                ca.send_pgn(0, VI_PDU_FORMAT, VI_PDU_SPECIFIC, VI_PRIORITY, self.identity.vin_payload())
-            elif pgn in _REQUESTABLE:
-                priority, encode = _REQUESTABLE[pgn]
-                ca.send_pgn(0, (pgn >> 8) & 0xFF, pgn & 0xFF, priority, list(encode(s)))
-            elif pgn == PGN_DM1:
-                self._send_dm1()
+        key = (pdu_format, pdu_specific)
+        with self._pending_lock:
+            pending = self._pending.get(key)
+            if pending is not None:
+                if event is not None:
+                    self._resolve(event, "queued: transport busy (joins the waiting reply)")
+                    pending.events.append(event)
                 return
-            elif dest_address != _GLOBAL_ADDRESS:
-                # J1939-21: a destination-specific request for an unsupported PGN gets a NACK
-                # (sent global, requester in byte 5) so the requester need not wait for a timeout.
-                ca.send_pgn(
-                    0, _ACK_PDU_FORMAT, _GLOBAL_ADDRESS, _ACK_PRIORITY,
-                    [_ACK_CONTROL_NACK, 0xFF, 0xFF, 0xFF, src_address & 0xFF,
-                     pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF],
+            try:
+                sent = ca.send_pgn(0, pdu_format, pdu_specific, priority, list(payload_fn()))
+            except RuntimeError:
+                # Session stopping / claim lost between the check and the send.
+                self._resolve(event, "dropped: ECU stopping")
+                return
+            if sent is False:
+                self._pending[key] = _PendingSend(
+                    priority, payload_fn, time.monotonic(), [event] if event is not None else []
                 )
-            else:
+                self._resolve(event, "queued: another BAM is on the bus")
                 return
-        except RuntimeError:
-            # Session stopping / claim lost between the check and the send.
-            return
+        self._resolve(event, done)
         self._on_tx()
 
-    def _send_dm1(self) -> None:
+    def _flush_pending(self, _cookie) -> bool:
+        """can-j1939 timer callback: retry queued replies; returning True keeps the tick running."""
         ca = self._ca
         if not self._running or ca is None:
+            return False
+        now = time.monotonic()
+        sent_count = 0
+        with self._pending_lock:
+            for key, item in list(self._pending.items()):
+                waited_ms = (now - item.queued_at) * 1000
+                if now - item.queued_at > _TP_RETRY_TIMEOUT_S:
+                    del self._pending[key]
+                    for event in item.events:
+                        self._resolve(event, f"dropped: transport busy for {waited_ms:.0f} ms")
+                    continue
+                try:
+                    sent = ca.send_pgn(0, key[0], key[1], item.priority, list(item.payload_fn()))
+                except RuntimeError:
+                    return False
+                if sent is False:
+                    continue
+                del self._pending[key]
+                sent_count += 1
+                for event in item.events:
+                    self._resolve(event, f"answered (+{waited_ms:.0f} ms, waited for BAM)")
+        for _ in range(sent_count):
+            self._on_tx()
+        return True
+
+    def _on_request(self, src_address: int, dest_address: int, pgn: int) -> None:
+        """Answer Request (PGN 59904) for VIN and the cyclic PGNs, and log it.
+
+        Called from the can-j1939 receive thread; deliberately does not take
+        the session lock so STOP (which holds it while joining) cannot deadlock.
+        """
+        event = RequestEvent(time.time(), src_address, dest_address, pgn)
+        self._requests.append(event)
+        if not self._running or self._ca is None:
+            self._resolve(event, "ignored: ECU stopped")
             return
-        try:
-            ca.send_pgn(0, DM1_PDU_FORMAT, DM1_PDU_SPECIFIC, DM1_PRIORITY, list(encode_dm1(self.diagnostics)))
-        except RuntimeError:
-            return
-        self._on_tx()
+        s = self.signals
+        if pgn == PGN_VI:
+            self._send(VI_PDU_FORMAT, VI_PDU_SPECIFIC, VI_PRIORITY, self.identity.vin_payload, event)
+        elif pgn in _REQUESTABLE:
+            priority, encode = _REQUESTABLE[pgn]
+            self._send((pgn >> 8) & 0xFF, pgn & 0xFF, priority, lambda: encode(s), event)
+        elif pgn == PGN_DM1:
+            self._send_dm1(event)
+        elif dest_address != _GLOBAL_ADDRESS:
+            # J1939-21: a destination-specific request for an unsupported PGN gets a NACK
+            # (sent global, requester in byte 5) so the requester need not wait for a timeout.
+            nack = [_ACK_CONTROL_NACK, 0xFF, 0xFF, 0xFF, src_address & 0xFF,
+                    pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF]
+            self._send(_ACK_PDU_FORMAT, _GLOBAL_ADDRESS, _ACK_PRIORITY, lambda: nack, event, "NACK (not supported)")
+        else:
+            self._resolve(event, "ignored: not supported (global request)")
+
+    def _send_dm1(self, event: RequestEvent | None = None) -> None:
+        self._send(DM1_PDU_FORMAT, DM1_PDU_SPECIFIC, DM1_PRIORITY, lambda: encode_dm1(self.diagnostics), event)
 
     def _dm1_tick(self, _cookie) -> bool:
         """can-j1939 timer callback; returning True keeps the 1 s DM1 cycle running."""
@@ -693,8 +902,14 @@ class EmulatorSession:
         if self._ca is not None:
             try:
                 self._ca.remove_timer(self._dm1_tick)
+                self._ca.remove_timer(self._flush_pending)
             except Exception:
                 pass
+        with self._pending_lock:
+            for item in self._pending.values():
+                for event in item.events:
+                    self._resolve(event, "dropped: ECU stopped")
+            self._pending.clear()
 
         if self._ca is not None:
             try:
@@ -730,6 +945,8 @@ class EmulatorSession:
         with self._stats_lock:
             self._load_pct = 0.0
         self._started_at = None
+        if self._trace is not None:
+            self._trace.close("STOP")
 
         # USB / libusb needs a beat before the same candleLight can reopen.
         if closed_real:

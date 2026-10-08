@@ -31,6 +31,12 @@ All other SPNs in these PGNs are sent as *not available* (`0xFF`).
 
 > Config files from before 2.0 used the key `spn917_total_mi`; it is still accepted.
 
+### Ignition: key ON with the engine off
+
+The **Ignition** card at the top of the Signals tab switches between **Engine running** and **Key ON · engine off**. With the key ON and the engine off, the ECU stays on the bus, claims its address and answers requests (VIN, odometer, engine hours), but EEC1 and CCVS send 0 rpm and 0 mph and the meters stand still. Switching to **Engine running** sets Engine Speed to idle (650 rpm); switching to **Key ON · engine off** sets it to 0 rpm. The Vehicle Speed setting is kept and sent again once the engine runs. In the CLI use `ignition on` / `ignition run`; in the config use `ignition` under `[vehicle]`.
+
+Some ELDs only start asking the ECU for the VIN once they see the engine running. In that case the VIN stays empty in the app while the key is ON; the [requests and J1939 trace](#requests-and-j1939-trace) show whether the ELD sends any request at all.
+
 ### Automatic odometer and engine hours
 
 While the ECU is running (after **START**):
@@ -194,6 +200,28 @@ The footer shows **Other nodes**: how many other source addresses were heard on 
 
 NO ACK detection needs an adapter that reports error frames (candleLight / gs_usb, SocketCAN). Other adapters still show TX FAILING when sends time out.
 
+### Requests and J1939 trace
+
+The **Logs** tab (after **Diagnostics**) has two panels for debugging an ELD on the bench:
+
+- **Incoming Requests (PGN 59904)**: the last 50 requests from other nodes. Each row shows who asked, to which address (`0x00` or Global), which PGN, and what the emulator did: answered, answered after waiting for another BAM, NACK, ignored, or "not for this ECU".
+- **J1939 Trace**: a decoded log of every frame exchanged, except the cyclic EEC1 / CCVS / VD / HOURS broadcasts. It covers requests, address claims, transport frames from both sides (BAM, RTS, CTS, EOMA, Abort), completed multi-packet payloads (the VIN is shown as text), failed sends and bus-error summaries, all with millisecond times. **Download** saves the file.
+
+A new trace file is written on every START, and the last 20 are kept, in `%APPDATA%\j1939-emulator\traces\` on Windows and `~/.local/state/j1939-emulator/traces/` on Linux/macOS.
+
+Example: an ELD asks the engine (`0x00`) for the VIN and gets a BAM back:
+
+```text
+18:41:19.755   +100.5ms  RX   18EA00F9  P6  59904  F9->00  EC FE 00                 Request for PGN 65260 (VI (VIN))
+18:41:19.755     +0.0ms  TX   18ECFF00  P6  60416  00->FF  20 12 00 03 FF EC FE 00  TP.CM BAM: 18 bytes in 3 packets, PGN 65260 (VI (VIN))
+18:41:19.755     +0.0ms  ---  request from 0xF9 to 0x00 for PGN 65260 (VI (VIN)): answered
+18:41:19.821    +65.6ms  TX   1CEBFF00  P7  60160  00->FF  01 31 48 54 4D 4D 41 41  TP.DT packet #1
+18:41:19.883    +62.2ms  TX   1CEBFF00  P7  60160  00->FF  02 4C 35 47 48 31 32 33  TP.DT packet #2
+18:41:19.945    +62.1ms  TX   1CEBFF00  P7  60160  00->FF  03 34 35 36 2A FF FF FF  TP.DT packet #3 -> complete PGN 65260 (VI (VIN)): '1HTMMAAL5GH123456*'
+```
+
+If the ELD keeps repeating the request, answers with a TP.CM Abort, or sends a CTS that the emulator never asked for, it probably expects a different transport (for example RTS/CTS instead of BAM).
+
 ### Bus modes
 
 | Mode | Channels | Hardware |
@@ -248,7 +276,10 @@ For Virtual mode you can also use the names `vcan0`, `vcan1`, `vcan2`. Use `--no
 | `status` / `payloads` | Live stats / current PGN hex |
 | `get <key>` / `set <key> <value>` | Read / change a signal (keys below) |
 | `vin [value]` | Show or set the VIN (rebroadcasts PGN 65260 if running) |
+| `ignition [on\|run]` | Show or set the ignition: `on` = key ON, engine off; `run` = engine running |
 | `dtc 1\|2\|both on\|off` | Inject / clear DM1 faults |
+| `requests [clear]` | Requests received from other nodes and how they were answered |
+| `trace [N]` | Last N lines (default 40) of the [J1939 trace](#requests-and-j1939-trace) and its file path |
 | `stop` / `start` / `reset` / `help` / `quit` | Session control |
 
 Signal keys for `get` / `set`:
@@ -285,8 +316,9 @@ identity_number = 0
 # Optional instead: name = 0x1000000000000000 (full 64-bit NAME; fields above override it)
 
 [vehicle]
-vin = "1HTMMAAL7GH123456"
+vin = "1HTMMAAL5GH123456"
 persist_meters = true    # keep odometer / engine hours per VIN between runs
+ignition = "run"         # "run" = engine running | "on" = key ON, engine off (0 rpm / 0 mph)
 
 [diagnostics]
 dtc_spn110_fmi3 = false   # SPN 110 / FMI 3: amber warning
@@ -323,7 +355,7 @@ Every `[pgn.*]` section is optional; missing values use the defaults from the ta
 |---------|--------------------|
 | Status pill shows **NO ACK** / ELD sees nothing | No node ACKs the frames. See the [bench wiring checklist](#bench-wiring-checklist): termination, a third ACKing node, H/L wiring, bitrate. |
 | Odometer / engine hours start from an old value | They are restored per VIN from `meters.json`. Set a new value in the GUI, or use `persist_meters = false`. |
-| ELD sees engine data but no VIN | The ELD must be able to receive multi-packet BAM (PGN 60416 / 60160). VIN is broadcast on START and on **Set**, and sent again whenever the ELD requests PGN 65260. |
+| ELD sees engine data but no VIN | The ELD must be able to receive multi-packet BAM (PGN 60416 / 60160). VIN is broadcast on START and on **Set**, and sent again whenever the ELD requests PGN 65260. Check the [requests and J1939 trace](#requests-and-j1939-trace): whether the request arrives, to which address, and how the ELD reacts to the BAM. |
 | `START failed` / `Cannot open device` | Another program holds the adapter, or the USB device has not been released yet. Close other CAN tools, wait a second and press START again. |
 | Port 8080 already in use | `python -m j1939_emulator --gui --port 8090` |
 | Adapter not listed | Check the vendor driver and USB cable, then click **Refresh** (GUI) or run `channels real` (CLI). |

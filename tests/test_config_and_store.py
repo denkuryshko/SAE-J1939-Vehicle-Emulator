@@ -81,3 +81,11 @@ def test_match_channel_by_number_and_name():
     assert match_channel(chans, "vcan2") is chans[2]
     assert match_channel(chans, "4") is None
     assert match_channel(chans, "nope") is None
+
+
+def test_ignition_from_config(tmp_path):
+    assert load_config(_write(tmp_path, BUS)).signals.engine_running
+    cfg = load_config(_write(tmp_path, BUS + '[vehicle]\nignition = "on"\n'))
+    assert not cfg.signals.engine_running
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, BUS + '[vehicle]\nignition = "off"\n'))

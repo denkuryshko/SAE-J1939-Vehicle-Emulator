@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 import warnings
 
 from j1939_emulator import __version__
@@ -15,7 +16,8 @@ from j1939_emulator.bus.detect import (
     resolve_channel,
 )
 from j1939_emulator.bus.session import EmulatorSession
-from j1939_emulator.config import load_config
+from j1939_emulator.config import IGNITION_VALUES, load_config
+from j1939_emulator.ecu_identity import vin_check_digit_warning
 from j1939_emulator.meters_store import restore_meters
 from j1939_emulator.pgn import all_payloads
 
@@ -132,11 +134,18 @@ bitrate [Hz]             — show or set bitrate (125000|250000|500000|1000000)
 info                     — dump runtime config (script/cloud friendly)
 status                   — uptime / TX / load / claim / DTCs / bus health / other nodes
 payloads                 — current PGN hex
+requests [clear]         — Requests (PGN 59904) from other nodes and how they were answered
+trace [N]                — last N lines (default 40) of the J1939 trace and its file path
+ignition [on|run]        — show or set ignition: on = key ON, engine off; run = engine running
 get <key>                — read SPN (e.g. get eec1.spn190_rpm)
 set <key> <value>        — change SPN (e.g. set eec1.spn190_rpm 2100)
 vin [value]              — show or set 17-char VIN
 dtc 1|2|both on|off      — inject/clear DM1 faults
 stop | start | reset | help | quit"""
+
+
+def _ignition_name(signals) -> str:
+    return "run" if signals.engine_running else "on (engine off)"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -251,9 +260,11 @@ def run_cli(args: argparse.Namespace) -> int:
         f"j1939-emulator {__version__}  mode={mode.value} "
         f"channel={channel.label!r} bitrate={bitrate} vin={identity.vin}"
     )
+    if warning := vin_check_digit_warning(identity.vin):
+        print(f"warning: {warning}")
     print(
         "Commands: channels | channel | mode | bitrate | info | "
-        "get/set | vin | dtc | status | payloads | stop/start/reset | help | quit"
+        "get/set | vin | dtc | status | payloads | requests | trace | stop/start/reset | help | quit"
     )
 
     if start:
@@ -431,9 +442,46 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"uptime={mm:02d}:{ss:02d} tx={st.tx_count} "
                     f"load={st.load_pct:.1f}% bitrate={st.bitrate} "
                     f"dtcs={st.active_dtcs} bus={st.bus_health.value} peers={st.peers} "
+                    f"ignition={_ignition_name(session.signals)} "
                     f"vin={session.identity.vin} "
                     f"channel={channel.label!r}"
                 )
+                continue
+            if cmd == "ignition":
+                if rest:
+                    choice = rest[0].lower()
+                    if choice not in IGNITION_VALUES:
+                        print("usage: ignition [on|run]")
+                        continue
+                    session.signals.set_ignition(IGNITION_VALUES[choice])
+                print(f"ignition={_ignition_name(session.signals)}")
+                continue
+            if cmd == "requests":
+                if rest and rest[0] == "clear":
+                    session.clear_requests()
+                    print("ok")
+                    continue
+                events = session.recent_requests()
+                if not events:
+                    print("no requests received yet")
+                for ev in events:
+                    stamp = time.strftime("%H:%M:%S", time.localtime(ev.at)) + f".{int(ev.at * 1000) % 1000:03d}"
+                    name = f" {ev.pgn_name}" if ev.pgn_name else ""
+                    print(
+                        f"{stamp}  0x{ev.src:02X}->0x{ev.dest:02X}  "
+                        f"PGN {ev.pgn}{name}  {ev.result or 'pending'}"
+                    )
+                continue
+            if cmd == "trace":
+                trace = session.trace
+                if trace is None:
+                    print("no trace yet: start the ECU first")
+                    continue
+                n = int(rest[0]) if rest and rest[0].isdigit() else 40
+                _count, lines = trace.recent()
+                for line in lines[-n:]:
+                    print(line)
+                print(f"file: {trace.path or 'not available'}")
                 continue
             if cmd == "payloads":
                 for name, hex_s in all_payloads(session.signals).items():
@@ -457,6 +505,8 @@ def run_cli(args: argparse.Namespace) -> int:
                         rest[0] if len(rest) == 1 else " ".join(rest)
                     )
                     print(f"ok vin={cleaned}")
+                    if warning := vin_check_digit_warning(cleaned):
+                        print(f"warning: {warning}")
                 except ValueError as exc:
                     print(f"error: {exc}")
                 continue

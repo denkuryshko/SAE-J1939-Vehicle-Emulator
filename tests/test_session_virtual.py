@@ -1,6 +1,7 @@
 """End-to-end on python-can's virtual bus: the emulator plus a fake ELD node."""
 
 import itertools
+import threading
 import time
 
 import can
@@ -73,12 +74,22 @@ def _read_bam(bus, pgn, seconds=1.5):
     return None
 
 
+def _wait_bam_start(bus, pgn, seconds=1.5):
+    end = time.time() + seconds
+    while time.time() < end:
+        m = bus.recv(0.05)
+        pf = (m.arbitration_id >> 16) & 0xFF if m else None
+        if pf == 0xEC and m.data[0] == 0x20 and int.from_bytes(m.data[5:8], "little") == pgn:
+            return
+    raise AssertionError(f"no BAM for PGN {pgn}")
+
+
 @pytest.mark.parametrize("dest", [0x00, 0xFF])
 def test_vin_answered_on_request(bench, dest):
     _session, eld = bench
     _drain(eld)
     _request(eld, 65260, dest)
-    assert _read_bam(eld, 65260) == b"1HTMMAAL7GH123456*"
+    assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"
 
 
 def test_engine_hours_answered_on_request(bench):
@@ -141,3 +152,78 @@ def test_stop_saves_meters_when_persisting(bench):
     restored = SignalState()
     assert restore_meters(restored, session.identity.vin)
     assert restored.spn245_total_mi == 4321.0
+
+
+def test_vin_request_during_dm1_bam_is_answered(bench):
+    # Two DTCs make DM1 a 10-byte BAM; can-j1939 sends one BAM at a time, so the VIN reply must wait, not drop.
+    session, eld = bench
+    session.inject_both_dtcs()
+    for _ in range(3):
+        _drain(eld)
+        _wait_bam_start(eld, 65226)  # DM1 BAM now holds the transport slot
+        _request(eld, 65260)
+        assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"
+
+
+def test_request_log_records_answers(bench):
+    session, eld = bench
+    session.clear_requests()
+    _request(eld, 65260)
+    _request(eld, 60928, dest=0xFF)  # address claim, answered inside can-j1939
+    _request(eld, 65260, dest=0x17)  # for another node
+    _request(eld, 65024)  # unsupported, addressed to us
+    time.sleep(0.6)
+    log = [(ev.src, ev.dest, ev.pgn, ev.result) for ev in session.recent_requests()]
+    assert log == [
+        (ELD_SA, 0x00, 65260, "answered"),
+        (ELD_SA, 0xFF, 60928, "answered (address claim)"),
+        (ELD_SA, 0x17, 65260, "not for this ECU (to 0x17)"),
+        (ELD_SA, 0x00, 65024, "NACK (not supported)"),
+    ]
+
+
+def test_send_failures_do_not_stop_the_ecu(bench):
+    # A real adapter raises on send when nobody ACKs; that used to kill can-j1939's job thread.
+    session, eld = bench
+    raw_bus = session._bus
+
+    def failing_send(msg, timeout=None):
+        raise can.CanOperationError("Send timeout")
+
+    raw_bus.send = failing_send
+    time.sleep(1.2)  # DM1 tick fails at least once
+    del raw_bus.send
+    assert session.stats().bus_health is BusHealth.TX_FAILING
+    _drain(eld)
+    _request(eld, 65260)
+    assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"
+
+
+def test_adapter_echo_does_not_cause_claim_flood(bench):
+    # candleLight echoes every sent frame back over USB (is_rx=False) a moment later.
+    session, eld = bench
+    ecu_bus, notifier = session._ecu._bus, session._ecu._notifier
+    plain_send = ecu_bus.send
+
+    def send_with_echo(msg, timeout=None):
+        plain_send(msg, timeout)
+        echo = can.Message(arbitration_id=msg.arbitration_id, data=bytes(msg.data), is_rx=False)
+        threading.Timer(0.002, lambda: [l.on_message_received(echo) for l in list(notifier.listeners)]).start()
+
+    ecu_bus.send = send_with_echo
+    _drain(eld)
+    _request(eld, 60928, dest=0xFF)  # ELD asks every node to announce itself
+    claims = _collect(eld, 1.0, 0xEEFF)
+    del ecu_bus.send
+    assert len(claims) == 1
+
+
+def test_key_on_engine_off_still_answers_vin(bench):
+    session, eld = bench
+    session.signals.spn190_rpm = 650
+    session.signals.set_spn("engine_running", False)
+    _drain(eld)
+    rpm_frames = _collect(eld, 0.3, 0xF004)
+    assert rpm_frames and all(f[3:5] == b"\x00\x00" for f in rpm_frames)
+    _request(eld, 65260)
+    assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"
