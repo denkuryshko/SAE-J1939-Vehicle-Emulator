@@ -272,6 +272,26 @@ class _TolerantSendBus:
         return getattr(self._bus, name)
 
 
+class _BroadcastObserver:
+    """The bus as the cyclic scheduler sees it: the same send(), plus a copy of each frame
+    for the GUI Traffic Monitor. Errors still reach the scheduler exactly as before."""
+
+    def __init__(self, bus: can.BusABC, trace: J1939Trace) -> None:
+        self._bus = bus
+        self._trace = trace
+
+    def send(self, msg: can.Message, timeout: float | None = None) -> None:
+        try:
+            self._bus.send(msg, timeout)
+        except Exception:
+            self._trace.broadcast(msg.arbitration_id, bytes(msg.data), ok=False)
+            raise
+        self._trace.broadcast(msg.arbitration_id, bytes(msg.data), ok=True)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._bus, name)
+
+
 class _ReceivedOnly(can.Listener):
     """Feeds can-j1939 only frames from other nodes, never the adapter's echo of our own TX.
 
@@ -973,7 +993,8 @@ class EmulatorSession:
             for enabled, arb_id, period_fn, data_fn in specs
             if enabled
         ]
-        sched = _PgnScheduler(self._bus, entries, self._on_tx, self._health.tx_failed)
+        bus = self._bus if self._trace is None else _BroadcastObserver(self._bus, self._trace)
+        sched = _PgnScheduler(bus, entries, self._on_tx, self._health.tx_failed)
         self._scheduler = sched
         sched.start()
 

@@ -3,6 +3,9 @@
 Meant for bench debugging of an ELD: which requests it sends and to which address,
 which transport frames it answers with (CTS, EOMA, Abort), what the emulator sent back
 and when, and send / bus errors. One file per START, kept in the app state directory.
+
+Every frame (cyclic broadcasts included) also goes into a small in-memory ring of raw
+entries for the GUI Traffic Monitor; the ring never reaches the file.
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 
 import can
@@ -21,6 +25,7 @@ _KEEP_FILES = 20
 _MAX_FILE_BYTES = 50 * 1024 * 1024
 _RECENT_LINES = 500
 _ERROR_SUMMARY_S = 1.0
+TRAFFIC_ROWS = 1000  # raw frames kept in memory for the Traffic Monitor
 
 _PGN_NAMES = {
     59904: "Request",
@@ -107,6 +112,40 @@ def describe(arb_id: int, data: bytes) -> str:
     return f"PGN {pgn_label(pgn)}"
 
 
+_TP_CM_TYPES = {0x10: "RTS", 0x11: "CTS", 0x13: "EOMA", 0x20: "BAM", 0xFF: "ABORT"}
+
+
+def frame_type(direction: str, arb_id: int, data: bytes) -> str:
+    """Short message type for the Traffic Monitor, from the same fields describe() uses."""
+    if direction == "TX!":
+        return "ERROR"
+    _prio, pgn, _sa, da = split_id(arb_id)
+    if pgn == 59904:
+        return "REQUEST"
+    if pgn == 59392 and data:
+        return _ACK_CONTROL.get(data[0], "ACK").upper()
+    if pgn == 60928:
+        return "ADDRESS CLAIM"
+    if pgn == 60416 and data:
+        return f"TP.CM {_TP_CM_TYPES[data[0]]}" if data[0] in _TP_CM_TYPES else "TP.CM"
+    if pgn == 60160:
+        return "TP.DT"
+    return "BROADCAST" if da == 0xFF else "DATA"
+
+
+@dataclass(frozen=True)
+class TrafficEntry:
+    """One frame (or bus-error summary, arb_id None) as the Traffic Monitor shows it."""
+
+    seq: int
+    at: float  # wall clock, time.time()
+    direction: str  # TX, RX, TX! (send failed) or ERR (bus error frames)
+    arb_id: int | None
+    data: bytes
+    kind: str
+    text: str = ""
+
+
 def _payload_text(pgn: int, payload: bytes) -> str:
     if pgn == 65260:
         return repr(payload.decode("ascii", errors="replace"))
@@ -121,6 +160,8 @@ class J1939Trace(can.Listener):
         self._lock = threading.Lock()
         self._recent: deque[str] = deque(maxlen=_RECENT_LINES)
         self._count = 0
+        self._traffic: deque[TrafficEntry] = deque(maxlen=TRAFFIC_ROWS)
+        self._traffic_seq = 0
         self._last_t: float | None = None
         self._transfers: dict[tuple[int, int], dict] = {}
         self._errors = 0
@@ -158,6 +199,7 @@ class J1939Trace(can.Listener):
 
     def frame(self, direction: str, arb_id: int, data: bytes, note: str = "") -> None:
         self._flush_errors()
+        self._record(direction, arb_id, data, frame_type(direction, arb_id, data))
         prio, pgn, sa, da = split_id(arb_id)
         meaning = describe(arb_id, data)
         done = self._reassemble(pgn, sa, da, data)
@@ -170,6 +212,11 @@ class J1939Trace(can.Listener):
             f"{data.hex(' ').upper():<23}  {meaning}"
         )
 
+    def broadcast(self, arb_id: int, data: bytes, ok: bool) -> None:
+        """A cyclic broadcast (EEC1, CCVS …): Traffic Monitor only, never written to the file."""
+        direction = "TX" if ok else "TX!"
+        self._record(direction, arb_id, data, frame_type(direction, arb_id, data))
+
     def note(self, text: str) -> None:
         self._line(f"---  {text}")
 
@@ -177,6 +224,18 @@ class J1939Trace(can.Listener):
         """(total lines written so far, last lines); the total lets a viewer fetch only new ones."""
         with self._lock:
             return self._count, list(self._recent)
+
+    def traffic_since(self, seq: int) -> tuple[int, list[TrafficEntry]]:
+        """(newest seq, entries after seq still in the ring); seq 0 returns the whole ring."""
+        with self._lock:
+            last = self._traffic_seq
+            if seq >= last:
+                return last, []
+            return last, [e for e in self._traffic if e.seq > seq]
+
+    def traffic_seq(self) -> int:
+        with self._lock:
+            return self._traffic_seq
 
     def close(self, text: str = "") -> None:
         """Write a closing note and close the file; later calls do nothing."""
@@ -233,6 +292,16 @@ class J1939Trace(can.Listener):
             self._errors = self._ack_errors = 0
         ack = f", {acks} of them ACK errors (nobody acknowledges our frames)" if acks else ""
         self.note(f"bus error frames: {errors}{ack}")
+        self._record("ERR", None, b"", "ERROR", f"bus error frames: {errors}{ack}")
+
+    def _record(
+        self, direction: str, arb_id: int | None, data: bytes, kind: str, text: str = ""
+    ) -> None:
+        with self._lock:
+            self._traffic_seq += 1
+            self._traffic.append(
+                TrafficEntry(self._traffic_seq, time.time(), direction, arb_id, data, kind, text)
+            )
 
     def _line(self, body: str) -> None:
         now = time.time()

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Callable
 
 from nicegui import ui
 
+from j1939_emulator.bus.trace import TRAFFIC_ROWS, TrafficEntry, split_id
 from j1939_emulator.ecu_identity import generate_vin, vin_check_digit_warning
 from j1939_emulator.pgn import (
     SignalState,
@@ -24,15 +26,18 @@ def _fmt_value(v: float, decimals: int | None) -> str:
     return str(int(v)) if v == int(v) else str(v)
 
 
-def _signal_top(spn: str, name: str, unit: str, initial: float, decimals: int | None) -> Any:
-    """SPN badge + name on the left, the current value in large type on the right."""
-    with ui.element("div").classes("signal-top"):
-        with ui.element("div").classes("signal-title"):
-            ui.label(spn).classes("spn-badge font-mono")
-            ui.label(name).classes("signal-name")
-        with ui.element("div").classes("signal-readout"):
-            disp = ui.label(_fmt_value(float(initial), decimals)).classes("signal-big font-mono")
-            ui.label(unit).classes("signal-unit")
+def _signal_label(spn: str, name: str) -> None:
+    """SPN and parameter name, each in its own grid column; the name is never cut."""
+    with ui.element("div").classes("sig-spn"):
+        ui.label(spn).classes("spn-badge font-mono")
+    ui.label(name).classes("signal-name")
+
+
+def _signal_value(unit: str, initial: float, decimals: int | None) -> Any:
+    """The current value, the most prominent thing in the row."""
+    with ui.element("div").classes("sig-value"):
+        disp = ui.label(_fmt_value(float(initial), decimals)).classes("signal-big font-mono")
+        ui.label(unit).classes("signal-unit")
     return disp
 
 
@@ -49,18 +54,21 @@ def slider_spn(
     decimals: int | None = None,
     number_step: float | None = None,
 ) -> Any:
-    with ui.element("div").classes("signal-box"):
-        disp = _signal_top(spn, name, unit, initial, decimals)
-        with ui.element("div").classes("range-row"):
-            slider = ui.slider(min=min_v, max=max_v, step=step, value=initial).classes(
-                "range-slider"
-            )
+    with ui.element("div").classes("signal-box sig-row"):
+        _signal_label(spn, name)
+        disp = _signal_value(unit, initial, decimals)
+        controls = ui.element("div").classes("sig-controls")
+        with controls:
+            # Input first, so it sits in the same place as the meters' input in every card.
             num = ui.number(
                 value=initial,
                 min=min_v,
                 max=max_v,
                 step=number_step if number_step is not None else step,
-            ).props("dense outlined").classes("value-input font-mono")
+            ).props("dense outlined").classes("value-input compact-input font-mono")
+            slider = ui.slider(min=min_v, max=max_v, step=step, value=initial).props(
+                "thumb-size=14px track-size=3px"
+            ).classes("range-slider").tooltip(f"Range {min_v:g} – {max_v:g} {unit}")
 
         syncing = False
 
@@ -93,15 +101,11 @@ def slider_spn(
         num.on_value_change(lambda e: apply(e.value))
 
         if presets:
-            with ui.element("div").classes("preset-row font-mono"):
-                ui.label(f"Min: {min_v} {unit}").classes("range-limit")
-                with ui.element("div").classes("preset-group"):
-                    ui.label("Presets:")
-                    for label, val in presets:
-                        ui.button(label, on_click=lambda v=val: apply(v)).classes(
-                            "preset-btn"
-                        ).props("flat dense")
-                ui.label(f"Max: {max_v} {unit}").classes("range-limit")
+            with controls, ui.element("div").classes("preset-group font-mono"):
+                for label, val in presets:
+                    ui.button(label, on_click=lambda v=val: apply(v)).classes(
+                        "preset-btn"
+                    ).props("flat dense")
     return sync
 
 
@@ -114,21 +118,25 @@ def counter_spn(
     decimals: int,
     on_change: Callable[[float], None],
     steps: tuple[float, ...],
+    hint: str = "",
 ) -> Any:
     """A meter (odometer, engine hours): exact number entry plus +/- step buttons, no slider."""
-    with ui.element("div").classes("signal-box"):
-        disp = _signal_top(spn, name, unit, initial, decimals)
+    with ui.element("div").classes("signal-box sig-row"):
+        _signal_label(spn, name)
+        disp = _signal_value(unit, initial, decimals)
         current = [float(initial)]
         syncing = False
-        with ui.element("div").classes("counter-row"):
+        with ui.element("div").classes("sig-controls"):
             num = ui.number(
                 value=initial, min=0, max=max_v, step=10 ** -decimals, format=f"%.{decimals}f"
-            ).props("dense outlined").classes("counter-input font-mono")
+            ).props("dense outlined").classes("counter-input compact-input font-mono")
             with ui.element("div").classes("step-group font-mono"):
                 for step in (*(-s for s in reversed(steps)), *steps):
                     ui.button(
                         f"{step:+g}", on_click=lambda d=step: apply(current[0] + d), color=None
                     ).classes("step-btn").props("flat dense")
+            if hint:
+                ui.icon("info_outline").classes("sig-hint").tooltip(hint)
 
         def show(v: float) -> None:
             current[0] = v
@@ -162,36 +170,49 @@ def counter_spn(
 def pgn_header(
     acronym: str,
     title: str,
-    pgn_badge: str,
-    can_id: str,
+    pgn: int,
+    can_id: int,
     cycle_ms: int,
     on_cycle: Callable[[int], None],
-) -> Any:
-    """Card header with a collapsible technical panel (PGN, CAN ID, cycle).
+    enabled: bool,
+) -> tuple[Any, Any]:
+    """One-line group header (acronym, name, PGN, ON/OFF, Details) and its collapsible panel.
 
-    Returns the panel element so callers can add more details (e.g. payload) into it.
+    Returns (details panel, header badge slot) so callers can add more details (payload)
+    and status chips (engine off).
     """
     with ui.element("div").classes("pgn-header"):
         with ui.element("div").classes("pgn-title-group"):
             ui.label(acronym).classes("badge-acronym font-mono")
-            ui.label(title).classes("pgn-name")
-        details_btn = ui.button("Details", icon="expand_more").classes(
-            "details-btn font-mono"
-        ).props("flat dense no-caps")
+            ui.label(title).classes("pgn-name").tooltip(title)
+            ui.label(f"PGN {pgn}").classes("pgn-number font-mono")
+        with ui.element("div").classes("pgn-header-right"):
+            badges = ui.element("div").classes("pgn-badges")
+            # Broadcast on/off comes from the config ("enabled" in the PGN's section) and is
+            # read on START; shown here, not switchable, so the TX logic stays as it is.
+            ui.label("● ON" if enabled else "○ OFF").classes(
+                "pgn-state font-mono " + ("on" if enabled else "off")
+            ).tooltip(
+                "Broadcast enabled" if enabled
+                else "Broadcast disabled in the config (enabled = false); takes effect on START"
+            )
+            details_btn = ui.button("Details", icon="expand_more").classes(
+                "details-btn font-mono"
+            ).props("flat dense no-caps")
 
     details = ui.element("div").classes("pgn-details")
     with details:
         with ui.element("div").classes("pgn-details-row font-mono"):
             with ui.row().classes("items-center gap-2"):
-                ui.label(pgn_badge).classes("badge-subtle font-mono")
-                ui.label(can_id).classes("badge-subtle font-mono").style(
+                ui.label(f"PGN {pgn} (0x{pgn:06X})").classes("badge-subtle font-mono")
+                ui.label(f"CAN ID: 0x{can_id:08X}").classes("badge-subtle font-mono").style(
                     "background:#F1F5F9;color:#5B6775;border-color:#CBD5E1;"
                 )
             with ui.row().classes("items-center gap-2").style("font-size:11px;color:#5B6775;"):
                 ui.label("Cycle:")
                 cycle_input = ui.number(value=cycle_ms, min=1, max=60000, step=1).props(
                     "dense outlined"
-                ).style("width:80px")
+                ).classes("compact-input").style("width:80px")
                 ui.label("ms").style("font-weight:700;color:#1F2A37;")
 
                 def apply_cycle(e) -> None:
@@ -212,7 +233,7 @@ def pgn_header(
         details_btn.props(f"icon={'expand_less' if shown else 'expand_more'}")
 
     details_btn.on_click(toggle_details)
-    return details
+    return details, badges
 
 
 def payload_strip(priority: int, hex_text: str) -> Any:
@@ -255,16 +276,9 @@ def follow_meter(
     ui.timer(1.0, poll)
 
 
-def meter_note(text: str) -> None:
-    ui.label(text).style("font-size:11px;color:#5B6775;padding:0 12px 10px;")
-
-
-def engine_off_note(sig: SignalState, text: str) -> None:
-    """Warning shown in a card while the key is ON with the engine off."""
-    note = ui.label(text).style(
-        "font-size:11px;color:#B45309;background:#FFFBEB;padding:6px 12px;"
-        "border-bottom:1px solid #FDE68A;"
-    )
+def engine_off_note(sig: SignalState, label: str, text: str) -> None:
+    """Header chip shown while the key is ON with the engine off; the full text on hover."""
+    note = ui.label(label).classes("engine-off-chip font-mono").tooltip(text)
     note.set_visibility(not sig.engine_running)
     ui.timer(0.5, lambda: note.set_visibility(not sig.engine_running))
 
@@ -317,17 +331,22 @@ def build_ignition(sig: SignalState) -> None:
 
 def build_eec1(sig: SignalState, payload_labels: dict) -> None:
     with ui.element("div").classes("pgn-card"):
-        details = pgn_header(
+        details, badges = pgn_header(
             "EEC1",
             "Electronic Engine Controller 1",
-            "PGN 61444 (0x00F004)",
-            "CAN ID: 0x0CF00400",
+            61444,
+            0x0CF00400,
             sig.cycle_eec1_ms,
             lambda ms: (setattr(sig, "cycle_eec1_ms", ms), sig.notify()),
+            sig.eec1_enabled,
         )
         with details:
             payload_labels["eec1"] = payload_strip(3, payload_hex(encode_eec1(sig)))
-        engine_off_note(sig, "Engine off: sending 0 rpm. Set 600 rpm or more, or start the engine, to run.")
+        with badges:
+            engine_off_note(
+                sig, "ENGINE OFF · 0 rpm",
+                "Engine off: sending 0 rpm. Set 600 rpm or more, or start the engine, to run.",
+            )
         sync_rpm = slider_spn(
             "SPN 190", "Engine Speed", "rpm", sig.spn190_rpm, 0, 3500, 25,
             sig.set_engine_speed,  # 0 rpm / >= 600 rpm also flip the ignition switch
@@ -346,17 +365,22 @@ def build_eec1(sig: SignalState, payload_labels: dict) -> None:
 
 def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
     with ui.element("div").classes("pgn-card"):
-        details = pgn_header(
+        details, badges = pgn_header(
             "CCVS",
             "Cruise Control / Vehicle Speed",
-            "PGN 65265 (0x00FEF1)",
-            "CAN ID: 0x18FEF100",
+            65265,
+            0x18FEF100,
             sig.cycle_ccvs_ms,
             lambda ms: (setattr(sig, "cycle_ccvs_ms", ms), sig.notify()),
+            sig.ccvs_enabled,
         )
         with details:
             payload_labels["ccvs"] = payload_strip(6, payload_hex(encode_ccvs(sig)))
-        engine_off_note(sig, "Engine off: sending 0 mph. This setting is used once the engine runs.")
+        with badges:
+            engine_off_note(
+                sig, "ENGINE OFF · 0 mph",
+                "Engine off: sending 0 mph. This setting is used once the engine runs.",
+            )
         slider_spn(
             "SPN 84", "Wheel-Based Vehicle Speed", "mph", sig.spn84_speed_mph, 0, 120, 0.5,
             _bind(sig, "spn84_speed_mph"),
@@ -367,41 +391,43 @@ def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
 
 def build_vd(sig: SignalState, payload_labels: dict) -> None:
     with ui.element("div").classes("pgn-card"):
-        details = pgn_header(
+        details, _ = pgn_header(
             "VD",
             "Vehicle Distance (Odometer)",
-            "PGN 65248 (0x00FEE0)",
-            "CAN ID: 0x18FEE000",
+            65248,
+            0x18FEE000,
             sig.cycle_vd_ms,
             lambda ms: (setattr(sig, "cycle_vd_ms", ms), sig.notify()),
+            sig.vd_enabled,
         )
         with details:
             payload_labels["vd"] = payload_strip(6, payload_hex(encode_vd(sig)))
         sync_odo = counter_spn(
             "SPN 245", "Total Vehicle Distance", "mi", sig.spn245_total_mi, 999999, 1,
             _bind(sig, "spn245_total_mi"), steps=(10, 100, 1000),
+            hint="Adds miles automatically while the ECU is running, based on Wheel-Based Vehicle Speed.",
         )
-        meter_note("Adds miles automatically while the ECU is running, based on Wheel-Based Vehicle Speed.")
         follow_meter(sig, "spn245_total_mi", sync_odo, payload_labels["vd"], encode_vd, 0.05)
 
 
 def build_hours(sig: SignalState, payload_labels: dict) -> None:
     with ui.element("div").classes("pgn-card"):
-        details = pgn_header(
+        details, _ = pgn_header(
             "HOURS",
             "Engine Hours, Revolutions",
-            "PGN 65253 (0x00FEE5)",
-            "CAN ID: 0x18FEE500",
+            65253,
+            0x18FEE500,
             sig.cycle_hours_ms,
             lambda ms: (setattr(sig, "cycle_hours_ms", ms), sig.notify()),
+            sig.hours_enabled,
         )
         with details:
             payload_labels["hours"] = payload_strip(6, payload_hex(encode_hours(sig)))
         sync_hours = counter_spn(
             "SPN 247", "Engine Total Hours of Operation", "h", sig.spn247_engine_hours, 99999, 2,
             _bind(sig, "spn247_engine_hours"), steps=(1, 10, 100),
+            hint="Counts up automatically while the ECU is running and Engine Speed > 0 rpm.",
         )
-        meter_note("Counts up automatically while the ECU is running and Engine Speed > 0 rpm.")
         follow_meter(sig, "spn247_engine_hours", sync_hours, payload_labels["hours"], encode_hours, 0.005)
 
 
@@ -586,6 +612,185 @@ def _request_rows(session) -> list[dict[str, Any]]:
             "result": ev.result or "pending",
         })
     return rows
+
+
+_TRAFFIC_ID = "j1939-traffic"
+_TRAFFIC_COLUMNS = ("Time", "Dir", "CAN ID", "PGN", "SA", "DA", "Type", "Data")
+
+# Rows are drawn in the browser: the server only sends the new frames each tick, and the
+# table keeps at most TRAFFIC_ROWS rows (oldest dropped first), so the page stays fast.
+_TRAFFIC_JS = """
+<script>
+window.j1939Traffic = (() => {
+  const MAX = %d;
+  const el = (id) => document.getElementById(id);
+  const atBottom = (w) => w.scrollHeight - w.scrollTop - w.clientHeight < 24;
+  const hint = (id, show) => { const h = el(id + '-new'); if (h) h.style.display = show ? '' : 'none'; };
+  const empty = (id, body) => { const e = el(id + '-empty'); if (e) e.style.display = body.rows.length ? 'none' : ''; };
+  function bind(id) {
+    const w = el(id);
+    if (w && !w.dataset.bound) {
+      w.dataset.bound = '1';
+      w.dataset.follow = '1';
+      w.addEventListener('scroll', () => {
+        if (!w.offsetParent) return;
+        w.dataset.follow = atBottom(w) ? '1' : '0';
+        if (atBottom(w)) hint(id, false);
+      });
+    }
+    return w;
+  }
+  return {
+    push(id, rows) {
+      const w = bind(id);
+      if (!w) return;
+      const body = w.querySelector('tbody');
+      const follow = w.offsetParent ? atBottom(w) : w.dataset.follow !== '0';
+      const frag = document.createDocumentFragment();
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        tr.className = 'tr-' + r[8];
+        for (let i = 0; i < 8; i++) {
+          const td = document.createElement('td');
+          td.textContent = r[i];
+          tr.appendChild(td);
+        }
+        frag.appendChild(tr);
+      }
+      body.appendChild(frag);
+      while (body.rows.length > MAX) body.deleteRow(0);
+      empty(id, body);
+      if (follow) { w.scrollTop = w.scrollHeight; hint(id, false); } else hint(id, true);
+    },
+    clear(id) {
+      const w = bind(id);
+      if (!w) return;
+      const body = w.querySelector('tbody');
+      body.replaceChildren();
+      empty(id, body);
+      hint(id, false);
+    },
+    bottom(id) {
+      const w = bind(id);
+      if (!w) return;
+      w.dataset.follow = '1';
+      w.scrollTop = w.scrollHeight;
+      hint(id, false);
+    },
+    shown(id) {
+      const w = bind(id);
+      if (w && w.dataset.follow !== '0') this.bottom(id);
+    },
+  };
+})();
+</script>
+""" % TRAFFIC_ROWS
+
+
+def _traffic_row(e: TrafficEntry) -> list[str]:
+    """[time, dir, CAN ID, PGN, SA, DA, type, data, css class] for one traffic entry."""
+    stamp = time.strftime("%H:%M:%S", time.localtime(e.at)) + f".{int(e.at * 1000) % 1000:03d}"
+    if e.arb_id is None:  # bus error summary
+        return [stamp, "", "", "", "", "", e.kind, e.text, "err"]
+    _prio, pgn, sa, da = split_id(e.arb_id)
+    failed = e.direction == "TX!"
+    return [
+        stamp,
+        "TX" if failed else e.direction,
+        f"{e.arb_id:08X}",
+        str(pgn),
+        f"{sa:02X}",
+        f"{da:02X}",
+        e.kind,
+        e.data.hex(" ").upper() + ("  (send failed)" if failed else ""),
+        "err" if failed else e.direction.lower(),
+    ]
+
+
+def build_traffic_pane(session) -> Callable[[], None]:
+    """Traffic tab: live J1939 frames (TX and RX) from the session trace.
+
+    PAUSE and CLEAR only affect this view; the ECU, the bus and the trace keep running.
+    Returns a callback for when the tab is shown (scrolls to the newest frame if following).
+    """
+    ui.add_body_html(_TRAFFIC_JS)
+    with ui.element("div").classes("card traffic-card"):
+        with ui.row().classes("w-full items-center justify-between").style(
+            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
+        ):
+            with ui.column().classes("gap-0"):
+                ui.label("J1939 Traffic Monitor").style(
+                    "font-size:14px;font-weight:700;text-transform:uppercase;"
+                )
+                ui.label(
+                    f"Every frame sent and received, newest at the bottom · last {TRAFFIC_ROWS} frames"
+                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+            with ui.row().classes("items-center gap-2"):
+                status = ui.label("● LIVE").classes("traffic-status live font-mono")
+                btn_pause = ui.button("Pause").classes("action-btn btn-restart font-mono").props(
+                    "unelevated dense"
+                )
+                btn_clear = ui.button("Clear").classes("action-btn btn-restart font-mono").props(
+                    "unelevated dense"
+                )
+        head = "".join(f"<th>{c}</th>" for c in _TRAFFIC_COLUMNS)
+        ui.html(
+            f'<div class="traffic-box">'
+            f'<div id="{_TRAFFIC_ID}" class="traffic-wrap">'
+            f'<table class="traffic-table"><thead><tr>{head}</tr></thead><tbody></tbody></table>'
+            f'<div id="{_TRAFFIC_ID}-empty" class="traffic-empty">'
+            f"No traffic yet. Press START to see the frames on the bus.</div>"
+            f"</div>"
+            f'<button id="{_TRAFFIC_ID}-new" class="traffic-new font-mono" style="display:none" '
+            f"onclick=\"j1939Traffic.bottom('{_TRAFFIC_ID}')\">&darr; New messages</button>"
+            f"</div>",
+            sanitize=False,
+        ).classes("w-full")
+
+    view: dict[str, Any] = {"trace": None, "seq": 0, "paused": False, "paused_seq": 0}
+
+    def push(rows: list[list[str]]) -> None:
+        ui.run_javascript(f"j1939Traffic.push('{_TRAFFIC_ID}', {json.dumps(rows)})")
+
+    def refresh() -> None:
+        if view["paused"]:
+            return
+        trace = session.trace
+        if trace is None:
+            return
+        if trace is not view["trace"]:  # a new START: its frames are numbered from 1 again
+            view["trace"], view["seq"] = trace, 0
+        last, entries = trace.traffic_since(view["seq"])
+        view["seq"] = last
+        if entries:
+            push([_traffic_row(e) for e in entries[-TRAFFIC_ROWS:]])
+
+    def on_pause() -> None:
+        view["paused"] = not view["paused"]
+        trace = session.trace
+        if view["paused"]:
+            view["paused_seq"] = trace.traffic_seq() if trace is not None else 0
+            status.set_text("● PAUSED")
+            status.classes(remove="live", add="paused")
+            btn_pause.set_text("Resume")
+            return
+        status.set_text("● LIVE")
+        status.classes(remove="paused", add="live")
+        btn_pause.set_text("Pause")
+        # Resume from the newest frame; say how many went by unseen instead of dumping them.
+        if trace is not None:
+            now_seq = trace.traffic_seq()
+            same_run = trace is view["trace"]
+            missed = now_seq - view["paused_seq"] if same_run else now_seq
+            view["trace"], view["seq"] = trace, now_seq
+            if missed > 0:
+                stamp = time.strftime("%H:%M:%S")
+                push([[stamp, "", "", "", "", "", "PAUSED", f"{missed} frames not shown while paused", "gap"]])
+
+    btn_pause.on_click(on_pause)
+    btn_clear.on_click(lambda: ui.run_javascript(f"j1939Traffic.clear('{_TRAFFIC_ID}')"))
+    ui.timer(0.25, refresh)
+    return lambda: ui.run_javascript(f"j1939Traffic.shown('{_TRAFFIC_ID}')")
 
 
 def build_logs_pane(session, refs: dict[str, Any]) -> None:

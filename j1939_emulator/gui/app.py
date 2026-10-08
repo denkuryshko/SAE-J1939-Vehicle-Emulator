@@ -29,6 +29,7 @@ from j1939_emulator.gui.widgets import (
     build_diagnostics_pane,
     build_ecu_pane,
     build_logs_pane,
+    build_traffic_pane,
     build_eec1,
     build_ignition,
     build_hours,
@@ -342,6 +343,9 @@ def _build_page(state: GuiState) -> None:
                             ui.label("Diagnostics (2 DTCs)")
                             diag_tab_pill = ui.label("2 Supported").classes("tab-pill")
                             state.ui_refs["diag_tab_pill"] = diag_tab_pill
+                        tab_traffic = ui.button().classes("tab-btn").props("flat dense")
+                        with tab_traffic:
+                            ui.label("Traffic")
 
                     pane_signals = ui.element("section")
                     with pane_signals:
@@ -370,6 +374,11 @@ def _build_page(state: GuiState) -> None:
                     with pane_diag:
                         build_diagnostics_pane(session, state.ui_refs)
                     pane_diag.set_visibility(False)
+
+                    pane_traffic = ui.element("section")
+                    with pane_traffic:
+                        on_traffic_shown = build_traffic_pane(session)
+                    pane_traffic.set_visibility(False)
 
                 with ui.element("aside").classes("work-logs"):
                     build_logs_pane(session, state.ui_refs)
@@ -572,14 +581,18 @@ def _build_page(state: GuiState) -> None:
         pane_signals.set_visibility(name == "signals")
         pane_ecu.set_visibility(name == "ecu")
         pane_diag.set_visibility(name == "diagnostics")
+        pane_traffic.set_visibility(name == "traffic")
         for btn, key in (
             (tab_signals, "signals"),
             (tab_ecu, "ecu"),
             (tab_diag, "diagnostics"),
+            (tab_traffic, "traffic"),
         ):
             btn.classes(remove="active")
             if key == name:
                 btn.classes(add="active")
+        if name == "traffic":
+            on_traffic_shown()
 
     last_health = [BusHealth.OK]
 
@@ -670,6 +683,7 @@ def _build_page(state: GuiState) -> None:
     tab_signals.on_click(lambda: switch_tab("signals"))
     tab_ecu.on_click(lambda: switch_tab("ecu"))
     tab_diag.on_click(lambda: switch_tab("diagnostics"))
+    tab_traffic.on_click(lambda: switch_tab("traffic"))
 
     ui.timer(0.2, update_chrome)
 

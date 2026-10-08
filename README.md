@@ -224,6 +224,15 @@ Example: an ELD asks the engine (`0x00`) for the VIN and gets a BAM back:
 
 If the ELD keeps repeating the request, answers with a TP.CM Abort, or sends a CTS that the emulator never asked for, it probably expects a different transport (for example RTS/CTS instead of BAM).
 
+### Traffic monitor
+
+The **Traffic** tab shows every frame on the bus as it happens, including the cyclic EEC1 / CCVS / VD / HOURS broadcasts that the trace file leaves out. One row per frame: time, direction (TX / RX), CAN ID, PGN, source and destination address, type (BROADCAST, REQUEST, ACK / NACK, ADDRESS CLAIM, TP.CM BAM / RTS / CTS / EOMA / ABORT, TP.DT, ERROR) and the raw data bytes.
+
+- The newest frame is at the bottom and the view follows it. Scroll up to read older frames and it stays put; **↓ New messages** jumps back to the newest.
+- **Pause** freezes the view only (it shows **PAUSED**). The ECU keeps sending and answering. **Resume** continues from the newest frame and notes how many frames went by unseen.
+- **Clear** empties the view only. The ECU, the counters and the trace file are not touched.
+- The view keeps the last 1000 frames, dropping the oldest first. At EEC1's 20 ms cycle that is roughly the last 15–20 seconds.
+
 ### Bus modes
 
 | Mode | Channels | Hardware |
