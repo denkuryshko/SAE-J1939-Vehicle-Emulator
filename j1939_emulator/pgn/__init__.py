@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 IDLE_RPM = 650.0
+# Engine Speed at or above this means the engine is running (follows the ignition switch).
+RUNNING_RPM = 600.0
 
 
 @dataclass
@@ -57,6 +59,15 @@ class SignalState:
         self.spn190_rpm = IDLE_RPM if running else 0.0
         self.notify()
 
+    def set_engine_speed(self, rpm: float) -> None:
+        """Set Engine Speed; 0 rpm turns the key to ON / engine off, >= 600 rpm to engine running."""
+        self.spn190_rpm = float(rpm)
+        if self.spn190_rpm <= 0:
+            self.engine_running = False
+        elif self.spn190_rpm >= RUNNING_RPM:
+            self.engine_running = True
+        self.notify()
+
     @property
     def broadcast_rpm(self) -> float:
         """Engine speed actually sent: 0 while the engine is off."""
@@ -87,6 +98,9 @@ class SignalState:
                 setattr(self, attr, value.strip().lower() in ("1", "true", "yes", "on", "active"))
             else:
                 setattr(self, attr, bool(int(value)))  # type: ignore[arg-type]
+        elif attr == "spn190_rpm":
+            self.set_engine_speed(float(value))  # type: ignore[arg-type]
+            return
         elif attr.startswith("cycle_"):
             code = int(float(value))  # type: ignore[arg-type]
             if code < 1:

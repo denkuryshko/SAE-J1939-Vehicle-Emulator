@@ -71,6 +71,20 @@ def test_ignition_switch_sets_idle_or_zero_rpm():
     assert (s.engine_running, s.spn190_rpm) == (False, 0)
 
 
+def test_engine_speed_flips_ignition():
+    s = SignalState(spn190_rpm=800, engine_running=True)
+    s.set_engine_speed(0)
+    assert not s.engine_running
+    s.set_engine_speed(300)  # below 600 rpm: switch stays where it is
+    assert not s.engine_running
+    s.set_engine_speed(600)
+    assert s.engine_running
+    s.set_engine_speed(300)
+    assert s.engine_running
+    s.set_spn("eec1.spn190_rpm", "0")
+    assert not s.engine_running
+
+
 def test_key_on_engine_off_sends_zero_and_keeps_settings():
     s = SignalState(spn190_rpm=650, spn84_speed_mph=60, spn247_engine_hours=10, spn245_total_mi=100)
     s.set_spn("engine_running", "false")

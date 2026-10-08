@@ -33,7 +33,7 @@ All other SPNs in these PGNs are sent as *not available* (`0xFF`).
 
 ### Ignition: key ON with the engine off
 
-The **Ignition** card at the top of the Signals tab switches between **Engine running** and **Key ON · engine off**. With the key ON and the engine off, the ECU stays on the bus, claims its address and answers requests (VIN, odometer, engine hours), but EEC1 and CCVS send 0 rpm and 0 mph and the meters stand still. Switching to **Engine running** sets Engine Speed to idle (650 rpm); switching to **Key ON · engine off** sets it to 0 rpm. The Vehicle Speed setting is kept and sent again once the engine runs. In the CLI use `ignition on` / `ignition run`; in the config use `ignition` under `[vehicle]`.
+The **Ignition** card at the top of the Signals tab switches between **Engine running** and **Key ON · engine off**. With the key ON and the engine off, the ECU stays on the bus, claims its address and answers requests (VIN, odometer, engine hours), but EEC1 and CCVS send 0 rpm and 0 mph and the meters stand still. Switching to **Engine running** sets Engine Speed to idle (650 rpm); switching to **Key ON · engine off** sets it to 0 rpm. It also works the other way: setting Engine Speed to 0 rpm switches to Key ON · engine off, and 600 rpm or more switches to Engine running. The Vehicle Speed setting is kept and sent again once the engine runs. In the CLI use `ignition on` / `ignition run`; in the config use `ignition` under `[vehicle]`.
 
 Some ELDs only start asking the ECU for the VIN once they see the engine running. In that case the VIN stays empty in the app while the key is ON; the [requests and J1939 trace](#requests-and-j1939-trace) show whether the ELD sends any request at all.
 
@@ -202,10 +202,12 @@ NO ACK detection needs an adapter that reports error frames (candleLight / gs_us
 
 ### Requests and J1939 trace
 
-The **Logs** tab (after **Diagnostics**) has two panels for debugging an ELD on the bench:
+The **Logs** panel on the right (below the tabs on narrow screens) is always visible, whatever tab is open, and has two parts for debugging an ELD on the bench:
 
 - **Incoming Requests (PGN 59904)**: the last 50 requests from other nodes. Each row shows who asked, to which address (`0x00` or Global), which PGN, and what the emulator did: answered, answered after waiting for another BAM, NACK, ignored, or "not for this ECU".
 - **J1939 Trace**: a decoded log of every frame exchanged, except the cyclic EEC1 / CCVS / VD / HOURS broadcasts. It covers requests, address claims, transport frames from both sides (BAM, RTS, CTS, EOMA, Abort), completed multi-packet payloads (the VIN is shown as text), failed sends and bus-error summaries, all with millisecond times. **Download** saves the file.
+
+The **Live** switch in the Logs header pauses the panel (it shows **PAUSED**) so a busy trace stops scrolling while you read it. Recording goes on: the trace file keeps every frame, and switching **Live** back on catches the panel up.
 
 A new trace file is written on every START, and the last 20 are kept, in `%APPDATA%\j1939-emulator\traces\` on Windows and `~/.local/state/j1939-emulator/traces/` on Linux/macOS.
 

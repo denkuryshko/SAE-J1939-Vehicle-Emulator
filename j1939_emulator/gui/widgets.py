@@ -18,6 +18,24 @@ from j1939_emulator.pgn import (
 )
 
 
+def _fmt_value(v: float, decimals: int | None) -> str:
+    if decimals is not None:
+        return f"{v:.{decimals}f}"
+    return str(int(v)) if v == int(v) else str(v)
+
+
+def _signal_top(spn: str, name: str, unit: str, initial: float, decimals: int | None) -> Any:
+    """SPN badge + name on the left, the current value in large type on the right."""
+    with ui.element("div").classes("signal-top"):
+        with ui.element("div").classes("signal-title"):
+            ui.label(spn).classes("spn-badge font-mono")
+            ui.label(name).classes("signal-name")
+        with ui.element("div").classes("signal-readout"):
+            disp = ui.label(_fmt_value(float(initial), decimals)).classes("signal-big font-mono")
+            ui.label(unit).classes("signal-unit")
+    return disp
+
+
 def slider_spn(
     spn: str,
     name: str,
@@ -32,35 +50,24 @@ def slider_spn(
     number_step: float | None = None,
 ) -> Any:
     with ui.element("div").classes("signal-box"):
-        with ui.element("div").classes("signal-top font-mono"):
-            with ui.row().classes("items-center"):
-                ui.label(spn).classes("spn-badge")
-                ui.label(name).classes("signal-name")
-            with ui.row().classes("items-center gap-1"):
-                if decimals is not None:
-                    disp = ui.label(f"{float(initial):.{decimals}f}").classes("signal-val")
-                else:
-                    v = float(initial)
-                    disp = ui.label(str(int(v)) if v == int(v) else str(v)).classes("signal-val")
-                ui.label(unit).style("font-size:11px;color:#5B6775;")
+        disp = _signal_top(spn, name, unit, initial, decimals)
         with ui.element("div").classes("range-row"):
-            slider = ui.slider(min=min_v, max=max_v, step=step, value=initial).classes("w-full")
+            slider = ui.slider(min=min_v, max=max_v, step=step, value=initial).classes(
+                "range-slider"
+            )
             num = ui.number(
                 value=initial,
                 min=min_v,
                 max=max_v,
                 step=number_step if number_step is not None else step,
-            ).props("dense outlined").style("width:90px")
+            ).props("dense outlined").classes("value-input font-mono")
 
         syncing = False
 
         def show(num_v: float) -> None:
             slider.value = num_v
             num.value = num_v
-            if decimals is not None:
-                disp.set_text(f"{num_v:.{decimals}f}")
-            else:
-                disp.set_text(str(int(num_v)) if num_v == int(num_v) else str(num_v))
+            disp.set_text(_fmt_value(num_v, decimals))
 
         def apply(val) -> None:
             if syncing:
@@ -86,17 +93,69 @@ def slider_spn(
         num.on_value_change(lambda e: apply(e.value))
 
         if presets:
-            with ui.row().classes("w-full justify-between font-mono").style(
-                "font-size:10px;color:#5B6775;"
-            ):
-                ui.label(f"Min: {min_v} {unit}")
-                with ui.row().classes("gap-1 items-center"):
+            with ui.element("div").classes("preset-row font-mono"):
+                ui.label(f"Min: {min_v} {unit}").classes("range-limit")
+                with ui.element("div").classes("preset-group"):
                     ui.label("Presets:")
                     for label, val in presets:
                         ui.button(label, on_click=lambda v=val: apply(v)).classes(
                             "preset-btn"
                         ).props("flat dense")
-                ui.label(f"Max: {max_v} {unit}")
+                ui.label(f"Max: {max_v} {unit}").classes("range-limit")
+    return sync
+
+
+def counter_spn(
+    spn: str,
+    name: str,
+    unit: str,
+    initial: float,
+    max_v: float,
+    decimals: int,
+    on_change: Callable[[float], None],
+    steps: tuple[float, ...],
+) -> Any:
+    """A meter (odometer, engine hours): exact number entry plus +/- step buttons, no slider."""
+    with ui.element("div").classes("signal-box"):
+        disp = _signal_top(spn, name, unit, initial, decimals)
+        current = [float(initial)]
+        syncing = False
+        with ui.element("div").classes("counter-row"):
+            num = ui.number(
+                value=initial, min=0, max=max_v, step=10 ** -decimals, format=f"%.{decimals}f"
+            ).props("dense outlined").classes("counter-input font-mono")
+            with ui.element("div").classes("step-group font-mono"):
+                for step in (*(-s for s in reversed(steps)), *steps):
+                    ui.button(
+                        f"{step:+g}", on_click=lambda d=step: apply(current[0] + d), color=None
+                    ).classes("step-btn").props("flat dense")
+
+        def show(v: float) -> None:
+            current[0] = v
+            num.value = round(v, decimals)
+            disp.set_text(_fmt_value(v, decimals))
+
+        def apply(val) -> None:
+            if syncing:
+                return
+            try:
+                v = float(val)
+            except (TypeError, ValueError):
+                return
+            v = max(0.0, min(max_v, v))
+            show(v)
+            on_change(v)
+
+        def sync(val: float) -> None:
+            """Reflect a value changed outside the UI without calling on_change."""
+            nonlocal syncing
+            syncing = True
+            try:
+                show(max(0.0, min(max_v, float(val))))
+            finally:
+                syncing = False
+
+        num.on_value_change(lambda e: apply(e.value))
     return sync
 
 
@@ -217,30 +276,43 @@ def build_ignition(sig: SignalState) -> None:
             with ui.element("div").classes("pgn-title-group"):
                 ui.label("KEY").classes("badge-acronym font-mono")
                 ui.label("Ignition").classes("pgn-name")
-            toggle = ui.toggle(
-                {"on": "Key ON · engine off", "run": "Engine running"},
-                value="run" if sig.engine_running else "on",
-            ).props("dense no-caps unelevated toggle-color=primary")
+            with ui.element("div").classes("ign-switch"):
+                btn_on = ui.button("Key ON · engine off", icon="vpn_key", color=None).classes(
+                    "ign-btn"
+                ).props("flat no-caps")
+                btn_run = ui.button("Engine running", icon="play_circle", color=None).classes(
+                    "ign-btn"
+                ).props("flat no-caps")
         ui.label(
             "Key ON, engine off: the ECU stays on the bus and answers requests (VIN, odometer, "
             "engine hours), but sends 0 rpm and 0 mph and the meters stand still. "
-            "Switching sets Engine Speed to idle 650 rpm (engine running) or 0 rpm (key ON)."
+            "Switching sets Engine Speed to idle 650 rpm (engine running) or 0 rpm (key ON); "
+            "setting Engine Speed to 0 rpm or to 600 rpm and above switches it back."
         ).style("font-size:11px;color:#5B6775;padding:8px 12px;")
 
-        def apply(e) -> None:
-            running = e.value == "run"
-            if running == sig.engine_running:
+        shown: list[bool | None] = [None]
+
+        def paint() -> None:
+            running = sig.engine_running
+            if shown[0] is running:
                 return
-            sig.set_ignition(running)  # also moves Engine Speed to idle / 0 rpm
+            shown[0] = running
+            btn_on.classes(remove="active-on")
+            btn_run.classes(remove="active-run")
+            if running:
+                btn_run.classes(add="active-run")
+            else:
+                btn_on.classes(add="active-on")
 
-        toggle.on_value_change(apply)
+        def choose(running: bool) -> None:
+            if running != sig.engine_running:
+                sig.set_ignition(running)  # also moves Engine Speed to idle / 0 rpm
+            paint()
 
-        def follow() -> None:
-            want = "run" if sig.engine_running else "on"
-            if toggle.value != want:  # changed outside this page (e.g. another browser tab)
-                toggle.value = want
-
-        ui.timer(0.5, follow)
+        btn_on.on_click(lambda: choose(False))
+        btn_run.on_click(lambda: choose(True))
+        paint()
+        ui.timer(0.5, paint)  # follows changes from another browser tab or the CLI
 
 
 def build_eec1(sig: SignalState, payload_labels: dict) -> None:
@@ -255,10 +327,10 @@ def build_eec1(sig: SignalState, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["eec1"] = payload_strip(3, payload_hex(encode_eec1(sig)))
-        engine_off_note(sig, "Engine off: sending 0 rpm. Starting the engine sets idle 650 rpm.")
+        engine_off_note(sig, "Engine off: sending 0 rpm. Set 600 rpm or more, or start the engine, to run.")
         sync_rpm = slider_spn(
             "SPN 190", "Engine Speed", "rpm", sig.spn190_rpm, 0, 3500, 25,
-            _bind(sig, "spn190_rpm"),
+            sig.set_engine_speed,  # 0 rpm / >= 600 rpm also flip the ignition switch
             presets=[("0 rpm", 0), ("Idle 650", 650), ("Cruise 1250", 1250), ("Rated 2100", 2100)],
         )
         shown = [sig.spn190_rpm]
@@ -305,9 +377,9 @@ def build_vd(sig: SignalState, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["vd"] = payload_strip(6, payload_hex(encode_vd(sig)))
-        sync_odo = slider_spn(
-            "SPN 245", "Total Vehicle Distance", "mi", sig.spn245_total_mi, 0, 999999, 10,
-            _bind(sig, "spn245_total_mi"), decimals=1, number_step=0.1,
+        sync_odo = counter_spn(
+            "SPN 245", "Total Vehicle Distance", "mi", sig.spn245_total_mi, 999999, 1,
+            _bind(sig, "spn245_total_mi"), steps=(10, 100, 1000),
         )
         meter_note("Adds miles automatically while the ECU is running, based on Wheel-Based Vehicle Speed.")
         follow_meter(sig, "spn245_total_mi", sync_odo, payload_labels["vd"], encode_vd, 0.05)
@@ -325,9 +397,9 @@ def build_hours(sig: SignalState, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["hours"] = payload_strip(6, payload_hex(encode_hours(sig)))
-        sync_hours = slider_spn(
-            "SPN 247", "Engine Total Hours of Operation", "h", sig.spn247_engine_hours, 0, 99999, 1,
-            _bind(sig, "spn247_engine_hours"), decimals=2, number_step=0.05,
+        sync_hours = counter_spn(
+            "SPN 247", "Engine Total Hours of Operation", "h", sig.spn247_engine_hours, 99999, 2,
+            _bind(sig, "spn247_engine_hours"), steps=(1, 10, 100),
         )
         meter_note("Counts up automatically while the ECU is running and Engine Speed > 0 rpm.")
         follow_meter(sig, "spn247_engine_hours", sync_hours, payload_labels["hours"], encode_hours, 0.005)
@@ -382,9 +454,9 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
             refs["claim_label"] = claim_label
 
         with ui.element("div").style(
-            "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;"
+            "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:16px;"
         ):
-            with ui.column().classes("gap-3"):
+            with ui.column().classes("gap-3 items-stretch min-w-0"):
                 with ui.element("div").style(
                     "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;"
                     "padding:16px;text-align:center;"
@@ -403,12 +475,11 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                     "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
                 ):
                     ui.label("Vehicle Identification Number (VIN)").classes("field-label")
-                    with ui.row().classes("w-full items-center gap-2").style("margin-top:4px;"):
+                    with ui.element("div").classes("vin-row"):
                         vin_input = (
                             ui.input(value=identity.vin)
                             .props("dense outlined maxlength=17")
-                            .classes("font-mono")
-                            .style("flex:1;font-weight:700;text-transform:uppercase;")
+                            .classes("vin-input font-mono")
                         )
                         btn_set_vin = ui.button("Set").classes(
                             "action-btn btn-start font-mono"
@@ -453,7 +524,7 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                     btn_copy.on_click(on_copy)
                     btn_generate.on_click(on_generate)
 
-            with ui.column().classes("gap-3"):
+            with ui.column().classes("gap-3 items-stretch min-w-0"):
                 with ui.element("div").style(
                     "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
                 ):
@@ -517,25 +588,42 @@ def _request_rows(session) -> list[dict[str, Any]]:
     return rows
 
 
-def build_logs_pane(session) -> None:
-    """Logs tab: incoming requests and the J1939 trace, for debugging an ELD on the bench."""
-    with ui.element("div").classes("card").style(
-        "display:flex;flex-direction:column;gap:16px;"
-    ):
+def build_logs_pane(session, refs: dict[str, Any]) -> None:
+    """Logs panel (always visible): incoming requests and the J1939 trace, for ELD bench debugging."""
+    with ui.element("div").classes("card logs-panel"):
         with ui.column().classes("gap-0").style(
             "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
         ):
-            ui.label("Logs").style(
-                "font-size:14px;font-weight:700;text-transform:uppercase;"
-            )
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.label("Logs").style(
+                    "font-size:14px;font-weight:700;text-transform:uppercase;"
+                )
+                refs["logs_pill"] = ui.label("0 Requests").classes("tab-pill font-mono").style(
+                    "margin-left:0;"
+                )
+                ui.space()
+                paused = ui.label("PAUSED").classes("logs-paused font-mono")
+                live = ui.switch("Live", value=True).props("dense color=positive").classes(
+                    "logs-live font-mono"
+                )
             ui.label(
                 "Requests from other nodes and a decoded J1939 trace of each run"
             ).classes("font-mono").style("font-size:11px;color:#5B6775;")
-        build_request_log(session)
-        build_trace_view(session)
+        # Pausing only freezes this panel; the trace file keeps recording, and the panel
+        # catches up with what it missed when monitoring is switched back on.
+        monitor = {"on": True}
+
+        def on_live(e) -> None:
+            monitor["on"] = bool(e.value)
+            paused.set_visibility(not monitor["on"])
+
+        live.on_value_change(on_live)
+        paused.set_visibility(False)
+        build_request_log(session, monitor)
+        build_trace_view(session, monitor)
 
 
-def build_request_log(session) -> None:
+def build_request_log(session, monitor: dict[str, bool]) -> None:
     """Requests (PGN 59904) from other nodes, e.g. an ELD asking for the VIN."""
     with ui.element("div").style(
         "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
@@ -560,7 +648,9 @@ def build_request_log(session) -> None:
 
     shown: list[dict[str, Any]] = []
 
-    def refresh() -> None:
+    def refresh(force: bool = False) -> None:
+        if not (monitor["on"] or force):
+            return
         rows = _request_rows(session)
         if rows == shown:
             return
@@ -572,14 +662,14 @@ def build_request_log(session) -> None:
 
     def on_clear() -> None:
         session.clear_requests()
-        refresh()
+        refresh(force=True)
 
     btn_clear.on_click(on_clear)
     table.set_visibility(False)
     ui.timer(0.5, refresh)
 
 
-def build_trace_view(session) -> None:
+def build_trace_view(session, monitor: dict[str, bool]) -> None:
     """Live J1939 trace (also written to a file per START) for debugging an ELD on the bench."""
     with ui.element("div").style(
         "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
@@ -596,13 +686,15 @@ def build_trace_view(session) -> None:
             btn_download = ui.button("Download").classes(
                 "action-btn btn-restart font-mono"
             ).props("unelevated dense")
-        log = ui.log(max_lines=500).classes("w-full font-mono").style(
-            "height:320px;font-size:11px;margin-top:8px;background:#FFF;white-space:pre;"
+        log = ui.log(max_lines=500).classes("trace-log w-full font-mono").style(
+            "font-size:11px;margin-top:8px;background:#FFF;white-space:pre;"
         )
 
     view = {"trace": None, "count": 0}
 
     def refresh() -> None:
+        if not monitor["on"]:
+            return
         trace = session.trace
         if trace is None:
             return

@@ -61,6 +61,8 @@ BUS_HEALTH_TEXT = {
         "Error frames on the bus. Check that every node uses the same bitrate and the wiring/termination.",
     ),
 }
+# Health states shown red (frames are not getting out); the rest are amber warnings.
+BUS_HEALTH_ERRORS = {BusHealth.TX_FAILING, BusHealth.BUS_ERRORS}
 
 MODE_OPTIONS = {
     "Real Hardware Emulation": EmulationMode.REAL,
@@ -237,24 +239,23 @@ def _build_page(state: GuiState) -> None:
     with ui.element("div").classes("j1939-root"):
         with ui.element("header").classes("topbar"):
             with ui.element("div").classes("brand-section"):
-                ui.label("E").classes("brand-icon")
+                ui.label("J").classes("brand-icon")
                 ui.label("SAE J1939 Vehicle Emulator").classes("brand-title")
                 ui.label(f"v{__version__}").classes("badge-subtle font-mono")
             with ui.element("div").classes("topbar-controls"):
-                top_pill = ui.element("span").classes("status-pill stopped font-mono")
+                top_pill = ui.element("span").classes("status-pill status-hero stopped font-mono")
                 with top_pill:
                     ui.element("span").classes("status-dot")
                     top_status = ui.label("ECU STOPPED")
                 port_badge = ui.label(f"PORT :{state.port} READY").classes(
                     "badge-subtle font-mono"
                 ).style("background:#F8FAFC; color:#5B6775; border-color:#CBD5E1;")
-                with ui.row().classes("items-center gap-1").style("flex-shrink:0;"):
+                with ui.element("div").classes("listen-group"):
                     ui.label("Host").classes("field-label").style("margin:0;")
                     host_input = (
                         ui.input(value=state.host)
                         .props("dense outlined")
-                        .style("width:120px;min-width:100px;")
-                        .classes("font-mono")
+                        .classes("host-input font-mono")
                     )
                     ui.label("Port").classes("field-label").style("margin:0;")
                     port_input = (
@@ -262,8 +263,7 @@ def _build_page(state: GuiState) -> None:
                             value=state.port, min=1, max=65535, step=1, format="%.0f"
                         )
                         .props("dense outlined")
-                        .style("width:90px;min-width:72px;")
-                        .classes("font-mono")
+                        .classes("port-input font-mono")
                     )
                     btn_apply_port = ui.button("Apply").props("flat dense")
                 btn_quit = (
@@ -279,29 +279,29 @@ def _build_page(state: GuiState) -> None:
                         "font-weight:800;font-size:11px;color:#5B6775;text-transform:uppercase;"
                         "border-right:1px solid #CBD5E1;padding-right:8px;"
                     )
-                    with ui.column().classes("gap-0"):
+                    with ui.column().classes("bus-field gap-0"):
                         ui.label("Emulation Mode").classes("field-label")
                         mode_select = ui.select(
                             options=list(MODE_OPTIONS.keys()),
                             value=next(k for k, v in MODE_OPTIONS.items() if v == state.mode),
-                        ).props("dense outlined options-dense").style("min-width:220px")
+                        ).props("dense outlined options-dense").classes("bus-select")
 
-                    with ui.column().classes("gap-0"):
+                    with ui.column().classes("bus-field bus-field-wide gap-0"):
                         ui.label("Interface / Channel").classes("field-label")
                         channel_select = ui.select(options={}, value=None).props(
                             "dense outlined options-dense"
-                        ).style("min-width:260px")
+                        ).classes("bus-select")
 
-                    with ui.column().classes("gap-0"):
+                    with ui.column().classes("bus-field gap-0"):
                         ui.label("Bitrate").classes("field-label")
                         bitrate_select = ui.select(
                             options=list(BITRATE_OPTIONS.keys()),
                             value=_bitrate_label(state.bitrate),
-                        ).props("dense outlined options-dense").style("width:160px")
+                        ).props("dense outlined options-dense").classes("bus-select")
 
                     refresh_btn = ui.button("Refresh").props("flat dense")
 
-                with ui.row().classes("items-center gap-2"):
+                with ui.element("div").classes("run-controls"):
                     btn_start = ui.button("START").classes(
                         "action-btn btn-start font-mono"
                     ).props("unelevated dense")
@@ -311,9 +311,7 @@ def _build_page(state: GuiState) -> None:
                     btn_reset = ui.button("RESET").classes(
                         "action-btn btn-restart font-mono"
                     ).props("unelevated dense outline")
-                    with ui.row().classes("items-center gap-3 font-mono").style(
-                        "margin-left:12px;font-size:11px;"
-                    ):
+                    with ui.element("div").classes("run-stats font-mono"):
                         ui.label("Uptime:")
                         stat_uptime = ui.label("00:00").style(
                             "font-weight:700;color:#1F2A37"
@@ -327,64 +325,62 @@ def _build_page(state: GuiState) -> None:
                             "font-weight:700;color:#1F2A37"
                         )
 
-            with ui.element("nav").classes("tab-bar font-mono"):
-                tab_signals = ui.button().classes("tab-btn active").props("flat dense")
-                with tab_signals:
-                    ui.label("Signals (PGNs & SPNs)")
-                    ui.label("4 PGNs").classes("tab-pill")
-                tab_ecu = ui.button().classes("tab-btn").props("flat dense")
-                with tab_ecu:
-                    ui.label("ECU & Vehicle (VIN)")
-                    ui.label(f"Node 0x{session.identity.source_address:02X}").classes("tab-pill")
-                tab_diag = ui.button().classes("tab-btn").props("flat dense")
-                with tab_diag:
-                    ui.label("Diagnostics (2 DTCs)")
-                    diag_tab_pill = ui.label("2 Supported").classes("tab-pill")
-                    state.ui_refs["diag_tab_pill"] = diag_tab_pill
-                tab_logs = ui.button().classes("tab-btn").props("flat dense")
-                with tab_logs:
-                    ui.label("Logs")
-                    logs_tab_pill = ui.label("0 Requests").classes("tab-pill")
+            # Tabs on the left; the Logs panel stays visible on the right whatever tab is open.
+            with ui.element("div").classes("workspace"):
+                with ui.element("div").classes("work-main"):
+                    with ui.element("nav").classes("tab-bar font-mono"):
+                        tab_signals = ui.button().classes("tab-btn active").props("flat dense")
+                        with tab_signals:
+                            ui.label("Signals (PGNs & SPNs)")
+                            ui.label("4 PGNs").classes("tab-pill")
+                        tab_ecu = ui.button().classes("tab-btn").props("flat dense")
+                        with tab_ecu:
+                            ui.label("ECU & Vehicle (VIN)")
+                            ui.label(f"Node 0x{session.identity.source_address:02X}").classes("tab-pill")
+                        tab_diag = ui.button().classes("tab-btn").props("flat dense")
+                        with tab_diag:
+                            ui.label("Diagnostics (2 DTCs)")
+                            diag_tab_pill = ui.label("2 Supported").classes("tab-pill")
+                            state.ui_refs["diag_tab_pill"] = diag_tab_pill
 
-            pane_signals = ui.element("section")
-            with pane_signals:
-                with ui.row().classes("w-full items-center justify-between").style(
-                    "margin-bottom:10px;"
-                ):
-                    ui.label(
-                        "SAE J1939-71 Application Layer · Real-Time 4 PGN CAN Broadcast"
-                    ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+                    pane_signals = ui.element("section")
+                    with pane_signals:
+                        with ui.row().classes("w-full items-center justify-between").style(
+                            "margin-bottom:10px;"
+                        ):
+                            ui.label(
+                                "SAE J1939-71 Application Layer · Real-Time 4 PGN CAN Broadcast"
+                            ).classes("font-mono").style("font-size:11px;color:#5B6775;")
 
-                state.payload_labels.clear()
-                sig.clear_listeners()
+                        state.payload_labels.clear()
+                        sig.clear_listeners()
 
-                build_ignition(sig)
-                build_eec1(sig, state.payload_labels)
-                build_ccvs(sig, state.payload_labels)
-                build_vd(sig, state.payload_labels)
-                build_hours(sig, state.payload_labels)
+                        build_ignition(sig)
+                        build_eec1(sig, state.payload_labels)
+                        build_ccvs(sig, state.payload_labels)
+                        build_vd(sig, state.payload_labels)
+                        build_hours(sig, state.payload_labels)
 
-            pane_ecu = ui.element("section")
-            with pane_ecu:
-                build_ecu_pane(session, state.ui_refs)
-            pane_ecu.set_visibility(False)
+                    pane_ecu = ui.element("section")
+                    with pane_ecu:
+                        build_ecu_pane(session, state.ui_refs)
+                    pane_ecu.set_visibility(False)
 
-            pane_diag = ui.element("section")
-            with pane_diag:
-                build_diagnostics_pane(session, state.ui_refs)
-            pane_diag.set_visibility(False)
+                    pane_diag = ui.element("section")
+                    with pane_diag:
+                        build_diagnostics_pane(session, state.ui_refs)
+                    pane_diag.set_visibility(False)
 
-            pane_logs = ui.element("section")
-            with pane_logs:
-                build_logs_pane(session)
-            pane_logs.set_visibility(False)
+                with ui.element("aside").classes("work-logs"):
+                    build_logs_pane(session, state.ui_refs)
+                    logs_tab_pill = state.ui_refs["logs_pill"]
 
         with ui.element("footer").classes("j1939-footer"):
             with ui.element("div").classes("footer-left font-mono"):
                 foot_status = ui.label("● ECU STOPPED")
                 foot_sa = ui.label(f"SA: 0x{session.identity.source_address:02X}")
                 foot_bitrate = ui.label(f"{state.bitrate // 1000} kbit/s")
-            with ui.row().classes("items-center gap-3 font-mono"):
+            with ui.element("div").classes("footer-right font-mono"):
                 foot_peers = ui.label("Other nodes: 0")
                 foot_tx = ui.label("TX Broadcast: 0 frames")
                 foot_dtc = ui.label("Active Faults: 0 DTCs").style("color:#1F9D55")
@@ -576,12 +572,10 @@ def _build_page(state: GuiState) -> None:
         pane_signals.set_visibility(name == "signals")
         pane_ecu.set_visibility(name == "ecu")
         pane_diag.set_visibility(name == "diagnostics")
-        pane_logs.set_visibility(name == "logs")
         for btn, key in (
             (tab_signals, "signals"),
             (tab_ecu, "ecu"),
             (tab_diag, "diagnostics"),
-            (tab_logs, "logs"),
         ):
             btn.classes(remove="active")
             if key == name:
@@ -596,10 +590,11 @@ def _build_page(state: GuiState) -> None:
         if st.running:
             health_text = BUS_HEALTH_TEXT.get(st.bus_health)
             if health_text is None:
-                top_pill.classes(remove="stopped warn", add="running")
-                top_status.set_text("EMULATING · RUNNING")
+                top_pill.classes(remove="stopped warn error", add="running")
+                top_status.set_text("ECU RUNNING · BROADCASTING")
             else:
-                top_pill.classes(remove="stopped running", add="warn")
+                level = "error" if st.bus_health in BUS_HEALTH_ERRORS else "warn"
+                top_pill.classes(remove="stopped running warn error", add=level)
                 top_status.set_text(health_text[0])
                 if st.bus_health is not last_health[0]:
                     ui.notify(health_text[1], type="warning", timeout=15000, close_button=True)
@@ -609,7 +604,7 @@ def _build_page(state: GuiState) -> None:
             btn_stop.enable()
         else:
             last_health[0] = BusHealth.OK
-            top_pill.classes(remove="running warn", add="stopped")
+            top_pill.classes(remove="running warn error", add="stopped")
             top_status.set_text("ECU STOPPED")
             foot_status.set_text("● ECU STOPPED")
             btn_start.enable()
@@ -675,7 +670,6 @@ def _build_page(state: GuiState) -> None:
     tab_signals.on_click(lambda: switch_tab("signals"))
     tab_ecu.on_click(lambda: switch_tab("ecu"))
     tab_diag.on_click(lambda: switch_tab("diagnostics"))
-    tab_logs.on_click(lambda: switch_tab("logs"))
 
     ui.timer(0.2, update_chrome)
 
