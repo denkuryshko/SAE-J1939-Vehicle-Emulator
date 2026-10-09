@@ -355,4 +355,40 @@ body, .nicegui-content {
   background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 3px; padding: 24px;
   color: #5B6775; font-size: 13px;
 }
+
+/* Fault injection */
+.pgn-toggle { cursor: pointer; user-select: none; }
+.pgn-toggle:hover { filter: brightness(0.95); box-shadow: 0 0 0 1px #94A3B8; }
+.fault-chip {
+  font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px; white-space: nowrap;
+  background: #FEF2F2; color: #B91C1C; border: 1px solid #FCA5A5;
+}
+.fault-summary { border-radius: 3px; padding: 10px 12px; font-size: 12px; }
+.fault-summary.ok { background: #EAF8F0; color: #1F7A45; border: 1px solid #A3E2BD; }
+.fault-summary.active { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
+.fault-summary-title { font-weight: 800; text-transform: uppercase; font-size: 11px; }
+.fault-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 12px;
+}
+.fault-section {
+  background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 3px; padding: 12px;
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.fault-section.fault-wide { grid-column: 1 / -1; }
+.fault-title { font-weight: 700; font-size: 11px; text-transform: uppercase; color: #1F2A37; }
+.fault-text { font-size: 11px; color: #5B6775; line-height: 1.45; }
+.fault-switch { font-size: 12px; font-weight: 700; color: #1F2A37; }
+.fault-pgn-table {
+  display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) minmax(190px, 220px);
+  align-items: center; gap: 6px 14px; font-size: 12px;
+}
+.fault-cell-muted { color: #94A3B8; font-size: 11px; white-space: nowrap; }
+.fault-cell-name { color: #1F2A37; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fault-select { min-width: 190px; }
+.footer-faults { color: #B45309; font-weight: 700; }
+@media (max-width: 760px) {
+  .fault-pgn-table { grid-template-columns: auto auto 1fr; }
+  .fault-cell-name { grid-column: 1 / -1; }
+  .fault-pgn-table .fault-select { grid-column: 1 / -1; }
+}
 """

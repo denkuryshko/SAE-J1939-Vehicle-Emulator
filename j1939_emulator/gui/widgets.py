@@ -17,7 +17,19 @@ from j1939_emulator.bus.trace import (
     trace_dir,
 )
 from j1939_emulator.ecu_identity import generate_vin, vin_check_digit_warning
+from j1939_emulator.faults import (
+    BROADCAST_PGNS,
+    MAX_REQUEST_DELAY_MS,
+    REQ_DELAY,
+    REQUEST_TARGET_ALL,
+    active_faults,
+    pgn_enabled,
+)
 from j1939_emulator.pgn import (
+    OVERRIDABLE_SPNS,
+    SPN_ERROR,
+    SPN_NORMAL,
+    SPN_NOT_AVAILABLE,
     SignalState,
     encode_ccvs,
     encode_eec1,
@@ -181,13 +193,16 @@ def pgn_header(
     can_id: int,
     cycle_ms: int,
     on_cycle: Callable[[int], None],
-    enabled: bool,
+    session,
+    key: str,
 ) -> tuple[Any, Any]:
     """One-line group header (acronym, name, PGN, ON/OFF, Details) and its collapsible panel.
 
-    Returns (details panel, header badge slot) so callers can add more details (payload)
+    ON/OFF switches the broadcast while running (fault injection: the ELD stops getting the
+    PGN). Returns (details panel, header badge slot) so callers can add more details (payload)
     and status chips (engine off).
     """
+    sig = session.signals
     with ui.element("div").classes("pgn-header"):
         with ui.element("div").classes("pgn-title-group"):
             ui.label(acronym).classes("badge-acronym font-mono")
@@ -195,14 +210,31 @@ def pgn_header(
             ui.label(f"PGN {pgn}").classes("pgn-number font-mono")
         with ui.element("div").classes("pgn-header-right"):
             badges = ui.element("div").classes("pgn-badges")
-            # Broadcast on/off comes from the config ("enabled" in the PGN's section) and is
-            # read on START; shown here, not switchable, so the TX logic stays as it is.
-            ui.label("● ON" if enabled else "○ OFF").classes(
-                "pgn-state font-mono " + ("on" if enabled else "off")
-            ).tooltip(
-                "Broadcast enabled" if enabled
-                else "Broadcast disabled in the config (enabled = false); takes effect on START"
+            with badges:
+                spn_fault_chip(sig, key)
+            # Starts as "enabled" in the config; click to switch the broadcast while running.
+            # Requests for the PGN are still answered (see the Faults tab for that).
+            state_btn = ui.label().classes("pgn-state pgn-toggle font-mono").tooltip(
+                "Cyclic broadcast on / off. Click to switch, also while running: off means the "
+                "ELD stops receiving this PGN. Requests for it are still answered."
             )
+            shown: list[bool | None] = [None]
+
+            def paint_state() -> None:
+                on = pgn_enabled(sig, key)
+                if shown[0] is on:
+                    return
+                shown[0] = on
+                state_btn.set_text("● ON" if on else "○ OFF")
+                state_btn.classes(remove="on off", add="on" if on else "off")
+
+            def toggle_state() -> None:
+                session.set_pgn_enabled(key, not pgn_enabled(sig, key))
+                paint_state()
+
+            state_btn.on("click", toggle_state)
+            paint_state()
+            ui.timer(0.5, paint_state)
             details_btn = ui.button("Details", icon="expand_more").classes(
                 "details-btn font-mono"
             ).props("flat dense no-caps")
@@ -283,6 +315,28 @@ def follow_meter(
     ui.timer(1.0, poll)
 
 
+_SPN_FAULT_TEXT = {SPN_NOT_AVAILABLE: "NOT AVAILABLE", SPN_ERROR: "ERROR"}
+
+
+def spn_fault_chip(sig: SignalState, pgn_key: str) -> None:
+    """Header chip while an SPN of this PGN sends 'not available' / 'error' (Faults tab)."""
+    keys = [k for k, (_spn, p) in OVERRIDABLE_SPNS.items() if p == pgn_key]
+    chip = ui.label().classes("fault-chip font-mono").tooltip(
+        "Fault injection (Faults tab): this SPN does not send its real value"
+    )
+
+    def paint() -> None:
+        texts = [
+            f"SPN {OVERRIDABLE_SPNS[k][0]}: {_SPN_FAULT_TEXT[sig.spn_override[k]]}"
+            for k in keys if sig.spn_override.get(k) in _SPN_FAULT_TEXT
+        ]
+        chip.set_text(" · ".join(texts))
+        chip.set_visibility(bool(texts))
+
+    paint()
+    ui.timer(0.5, paint)
+
+
 def engine_off_note(sig: SignalState, label: str, text: str) -> None:
     """Header chip shown while the key is ON with the engine off; the full text on hover."""
     note = ui.label(label).classes("engine-off-chip font-mono").tooltip(text)
@@ -336,7 +390,8 @@ def build_ignition(sig: SignalState) -> None:
         ui.timer(0.5, paint)  # follows changes from another browser tab or the CLI
 
 
-def build_eec1(sig: SignalState, payload_labels: dict) -> None:
+def build_eec1(session, payload_labels: dict) -> None:
+    sig = session.signals
     with ui.element("div").classes("pgn-card"):
         details, badges = pgn_header(
             "EEC1",
@@ -345,7 +400,8 @@ def build_eec1(sig: SignalState, payload_labels: dict) -> None:
             0x0CF00400,
             sig.cycle_eec1_ms,
             lambda ms: (setattr(sig, "cycle_eec1_ms", ms), sig.notify()),
-            sig.eec1_enabled,
+            session,
+            "eec1",
         )
         with details:
             payload_labels["eec1"] = payload_strip(3, payload_hex(encode_eec1(sig)))
@@ -370,7 +426,8 @@ def build_eec1(sig: SignalState, payload_labels: dict) -> None:
         ui.timer(0.3, follow_rpm)
 
 
-def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
+def build_ccvs(session, payload_labels: dict) -> None:
+    sig = session.signals
     with ui.element("div").classes("pgn-card"):
         details, badges = pgn_header(
             "CCVS",
@@ -379,7 +436,8 @@ def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
             0x18FEF100,
             sig.cycle_ccvs_ms,
             lambda ms: (setattr(sig, "cycle_ccvs_ms", ms), sig.notify()),
-            sig.ccvs_enabled,
+            session,
+            "ccvs",
         )
         with details:
             payload_labels["ccvs"] = payload_strip(6, payload_hex(encode_ccvs(sig)))
@@ -396,7 +454,8 @@ def build_ccvs(sig: SignalState, payload_labels: dict) -> None:
         )
 
 
-def build_vd(sig: SignalState, payload_labels: dict) -> None:
+def build_vd(session, payload_labels: dict) -> None:
+    sig = session.signals
     with ui.element("div").classes("pgn-card"):
         details, _ = pgn_header(
             "VD",
@@ -405,7 +464,8 @@ def build_vd(sig: SignalState, payload_labels: dict) -> None:
             0x18FEE000,
             sig.cycle_vd_ms,
             lambda ms: (setattr(sig, "cycle_vd_ms", ms), sig.notify()),
-            sig.vd_enabled,
+            session,
+            "vd",
         )
         with details:
             payload_labels["vd"] = payload_strip(6, payload_hex(encode_vd(sig)))
@@ -417,7 +477,8 @@ def build_vd(sig: SignalState, payload_labels: dict) -> None:
         follow_meter(sig, "spn245_total_mi", sync_odo, payload_labels["vd"], encode_vd, 0.05)
 
 
-def build_hours(sig: SignalState, payload_labels: dict) -> None:
+def build_hours(session, payload_labels: dict) -> None:
+    sig = session.signals
     with ui.element("div").classes("pgn-card"):
         details, _ = pgn_header(
             "HOURS",
@@ -426,7 +487,8 @@ def build_hours(sig: SignalState, payload_labels: dict) -> None:
             0x18FEE500,
             sig.cycle_hours_ms,
             lambda ms: (setattr(sig, "cycle_hours_ms", ms), sig.notify()),
-            sig.hours_enabled,
+            session,
+            "hours",
         )
         with details:
             payload_labels["hours"] = payload_strip(6, payload_hex(encode_hours(sig)))
@@ -1189,3 +1251,211 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
         btn_clear.on_click(lambda: (session.clear_all_dtcs(), refresh_dtc_ui()))
         btn_inject.on_click(lambda: (session.inject_both_dtcs(), refresh_dtc_ui()))
         refresh_dtc_ui()
+
+
+# --- Faults tab ---
+
+_SPN_MODE_OPTIONS = {
+    SPN_NORMAL: "Real value",
+    SPN_NOT_AVAILABLE: "Not available (0xFF…)",
+    SPN_ERROR: "Error (0xFE…)",
+}
+_SPN_NAMES = {
+    "spn190": "Engine Speed",
+    "spn84": "Wheel-Based Vehicle Speed",
+    "spn245": "Total Vehicle Distance",
+    "spn247": "Engine Total Hours",
+}
+_REQUEST_MODE_OPTIONS = {
+    "normal": "Normal: answer",
+    "ignore": "Ignore: no reply",
+    "nack": "NACK: refuse",
+    "delay": "Delay the reply",
+}
+_REQUEST_TARGET_OPTIONS = {
+    REQUEST_TARGET_ALL: "All PGNs",
+    65260: "65260 VI (VIN)",
+    65248: "65248 VD (odometer)",
+    65253: "65253 HOURS",
+    61444: "61444 EEC1",
+    65265: "65265 CCVS",
+    65226: "65226 DM1",
+}
+
+
+def _fault_section(title: str, text: str) -> Any:
+    box = ui.element("div").classes("fault-section")
+    with box:
+        ui.label(title).classes("fault-title")
+        ui.label(text).classes("fault-text")
+    return box
+
+
+def build_faults_pane(session, refs: dict[str, Any]) -> None:
+    """Faults tab: make the ECU misbehave on purpose to see how the ELD reacts.
+
+    Every control writes through the session (which notes the change in the trace) and is
+    re-read twice a second, so Clear All, the PGN cards and other browser tabs stay in step.
+    """
+    sig, faults = session.signals, session.faults
+    syncers: list[Callable[[], None]] = []
+
+    def bind(control: Any, read: Callable[[], Any], write: Callable[[Any], None]) -> None:
+        """Two-way link: user changes call write(); state changes elsewhere move the control."""
+        control.on_value_change(lambda e: write(e.value) if e.value != read() else None)
+
+        def sync() -> None:
+            if control.value != read():
+                control.value = read()
+
+        syncers.append(sync)
+
+    with ui.element("div").classes("card").style("display:flex;flex-direction:column;gap:14px;"):
+        with ui.row().classes("w-full items-center justify-between").style(
+            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
+        ):
+            with ui.column().classes("gap-0"):
+                ui.label("Fault Injection").style(
+                    "font-size:14px;font-weight:700;text-transform:uppercase;"
+                )
+                ui.label(
+                    "Make the ECU misbehave on purpose and watch how the ELD reacts. Runtime only: "
+                    "nothing is saved, every change is noted in the J1939 trace."
+                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+            btn_clear = ui.button("Clear All Faults").classes(
+                "action-btn btn-restart font-mono"
+            ).props("unelevated dense")
+
+        summary = ui.element("div").classes("fault-summary font-mono")
+        with summary:
+            summary_title = ui.label().classes("fault-summary-title")
+            summary_list = ui.column().classes("gap-0")
+
+        with ui.element("div").classes("fault-grid"):
+            with _fault_section(
+                "ECU on the bus",
+                "Silent: the ECU stays connected but sends nothing: no broadcasts, no replies, "
+                "no DM1, no address claim. To the ELD the engine ECU has disappeared "
+                "(engine synchronization / ECM connectivity malfunction). Requests are logged "
+                "as ignored.",
+            ):
+                sw_silent = ui.switch("ECU silent").props("dense color=negative").classes(
+                    "font-mono fault-switch"
+                )
+                bind(sw_silent, lambda: faults.silent, session.set_silent)
+
+            with _fault_section(
+                "Meters",
+                "Frozen meters stop counting while the engine runs (the ELD sees driving with a "
+                "stuck odometer or engine hours). To make them jump or go backwards use the ± "
+                "buttons on the Signals tab; the VIN can be changed mid-trip on ECU & Vehicle.",
+            ):
+                with ui.row().classes("gap-6"):
+                    sw_odo = ui.switch("Freeze odometer").props("dense color=warning").classes(
+                        "font-mono fault-switch"
+                    )
+                    sw_hours = ui.switch("Freeze engine hours").props(
+                        "dense color=warning"
+                    ).classes("font-mono fault-switch")
+                bind(sw_odo, lambda: sig.freeze_odometer, lambda v: session.set_freeze(odometer=v))
+                bind(sw_hours, lambda: sig.freeze_hours, lambda v: session.set_freeze(hours=v))
+
+            with _fault_section(
+                "Broadcast PGNs",
+                "Switch a cyclic broadcast off (the ELD stops receiving it), or make an SPN send "
+                "'not available' or 'error' instead of its value: a missing or broken sensor. "
+                "Overrides apply to broadcasts and to replies on request alike.",
+            ).classes("fault-wide"):
+                with ui.element("div").classes("fault-pgn-table font-mono"):
+                    for pgn_key, (acronym, pgn) in BROADCAST_PGNS.items():
+                        spn_key = next(k for k, (_s, p) in OVERRIDABLE_SPNS.items() if p == pgn_key)
+                        spn = OVERRIDABLE_SPNS[spn_key][0]
+                        ui.label(acronym).classes("badge-acronym font-mono").style("justify-self:start;")
+                        ui.label(f"PGN {pgn}").classes("fault-cell-muted")
+                        sw = ui.switch("Broadcast").props("dense color=positive")
+                        bind(
+                            sw,
+                            lambda k=pgn_key: pgn_enabled(sig, k),
+                            lambda v, k=pgn_key: session.set_pgn_enabled(k, v),
+                        )
+                        ui.label(f"SPN {spn} {_SPN_NAMES[spn_key]}").classes("fault-cell-name")
+                        sel = ui.select(options=_SPN_MODE_OPTIONS, value=SPN_NORMAL).props(
+                            "dense outlined options-dense"
+                        ).classes("fault-select")
+                        bind(
+                            sel,
+                            lambda k=spn_key: sig.spn_override.get(k, SPN_NORMAL),
+                            lambda v, k=spn_key: session.set_spn_override(k, v),
+                        )
+
+            with _fault_section(
+                "Requests (PGN 59904)",
+                "How the ECU answers an ELD's requests: Ignore (the ELD must time out and "
+                "retry), NACK (refused even though supported), or Delay (the reply comes late, "
+                "with the data current at that moment). The Logs panel shows what happened "
+                "to each request.",
+            ).classes("fault-wide"):
+                with ui.row().classes("items-end gap-3 flex-wrap"):
+                    with ui.column().classes("gap-0"):
+                        ui.label("Requests for").classes("field-label")
+                        sel_target = ui.select(
+                            options=_REQUEST_TARGET_OPTIONS, value=faults.request_target
+                        ).props("dense outlined options-dense").classes("fault-select")
+                    with ui.column().classes("gap-0"):
+                        ui.label("Handling").classes("field-label")
+                        sel_mode = ui.select(
+                            options=_REQUEST_MODE_OPTIONS, value=faults.request_mode
+                        ).props("dense outlined options-dense").classes("fault-select")
+                    with ui.column().classes("gap-0"):
+                        ui.label("Delay, ms").classes("field-label")
+                        num_delay = ui.number(
+                            value=faults.request_delay_ms, min=0, max=MAX_REQUEST_DELAY_MS,
+                            step=50, format="%.0f",
+                        ).props("dense outlined").classes("compact-input font-mono").style(
+                            "width:110px"
+                        )
+                    with ui.element("div").classes("preset-group font-mono"):
+                        for ms in (200, 1000, 3000):
+                            ui.button(f"{ms} ms", on_click=lambda m=ms: session.set_request_fault(
+                                "delay", delay_ms=m
+                            )).classes("preset-btn").props("flat dense")
+                bind(sel_target, lambda: faults.request_target,
+                     lambda v: session.set_request_fault(faults.request_mode, target=int(v)))
+                bind(sel_mode, lambda: faults.request_mode, lambda v: session.set_request_fault(v))
+
+                def write_delay(v: Any) -> None:
+                    try:
+                        ms = int(float(v))
+                    except (TypeError, ValueError):
+                        return
+                    session.set_request_fault(faults.request_mode, delay_ms=ms)
+
+                bind(num_delay, lambda: faults.request_delay_ms, write_delay)
+
+    shown: list[list[str] | None] = [None]
+
+    def refresh() -> None:
+        for sync in syncers:
+            sync()
+        if faults.request_mode == REQ_DELAY:
+            num_delay.enable()
+        else:
+            num_delay.disable()
+        items = active_faults(sig, faults)
+        if items == shown[0]:
+            return
+        shown[0] = items
+        summary.classes(remove="ok active", add="active" if items else "ok")
+        summary_title.set_text(
+            f"{len(items)} active fault{'' if len(items) == 1 else 's'}" if items
+            else "No faults: the ECU behaves normally"
+        )
+        summary_list.clear()
+        with summary_list:
+            for item in items:
+                ui.label(f"• {item}")
+
+    btn_clear.on_click(lambda: (session.clear_faults(), refresh(), ui.notify("All faults cleared", type="info")))
+    refs["refresh_faults"] = refresh
+    refresh()
+    ui.timer(0.5, refresh)

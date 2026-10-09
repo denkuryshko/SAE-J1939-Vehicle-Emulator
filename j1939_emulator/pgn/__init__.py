@@ -11,6 +11,19 @@ KM_PER_MI = 1.609344
 # Engine Speed at or above this means the engine is running (follows the ignition switch).
 RUNNING_RPM = 600.0
 
+# Fault injection: what an SPN sends instead of its value (J1939-71 special ranges).
+SPN_NORMAL = "normal"
+SPN_NOT_AVAILABLE = "not_available"  # all bits 1 (0xFF…): sensor / parameter not available
+SPN_ERROR = "error"  # 0xFE…: error indicator, the sensor is broken
+SPN_OVERRIDE_MODES = (SPN_NORMAL, SPN_NOT_AVAILABLE, SPN_ERROR)
+# Broadcast SPNs that can be overridden: key -> (SPN number, PGN key).
+OVERRIDABLE_SPNS = {
+    "spn190": (190, "eec1"),
+    "spn84": (84, "ccvs"),
+    "spn245": (245, "vd"),
+    "spn247": (247, "hours"),
+}
+
 
 @dataclass
 class SignalState:
@@ -42,6 +55,13 @@ class SignalState:
     cycle_ccvs_ms: int = 100
     cycle_vd_ms: int = 1000
     cycle_hours_ms: int = 1000
+
+    # Fault injection (runtime only, never read from or saved to the config):
+    # SPN key ("spn190" …) -> SPN_NOT_AVAILABLE / SPN_ERROR; missing means normal.
+    spn_override: dict[str, str] = field(default_factory=dict)
+    # Frozen meters stand still while the engine runs; values set by hand still apply.
+    freeze_odometer: bool = False
+    freeze_hours: bool = False
 
     _listeners: list[Callable[[], None]] = field(default_factory=list, repr=False)
 
@@ -84,9 +104,9 @@ class SignalState:
         """Advance engine hours (while rpm > 0) and odometer (by vehicle speed) over dt_s seconds."""
         if dt_s <= 0:
             return
-        if self.broadcast_rpm > 0:
+        if self.broadcast_rpm > 0 and not self.freeze_hours:
             self.spn247_engine_hours += dt_s / 3600.0
-        if self.broadcast_speed_mph > 0:
+        if self.broadcast_speed_mph > 0 and not self.freeze_odometer:
             self.spn245_total_mi += self.broadcast_speed_mph * dt_s / 3600.0
 
     def set_spn(self, key: str, value: object) -> None:
@@ -154,9 +174,20 @@ CAN_ID_VD = 0x18FEE000
 CAN_ID_HOURS = 0x18FEE500
 
 
+def _override(state: SignalState, key: str, raw: int, size: int) -> int:
+    """The raw value to send for an SPN of `size` bytes, after fault injection."""
+    mode = state.spn_override.get(key, SPN_NORMAL)
+    if mode == SPN_NOT_AVAILABLE:
+        return (1 << (8 * size)) - 1
+    if mode == SPN_ERROR:
+        return 0xFE << (8 * (size - 1))
+    return raw
+
+
 def encode_eec1(state: SignalState) -> bytes:
     """EEC1 PGN 61444 — SPN 190 engine speed; other SPNs not available."""
-    raw_rpm = min(65535, max(0, round(state.broadcast_rpm / 0.125)))
+    raw_rpm = min(0xFAFF, max(0, round(state.broadcast_rpm / 0.125)))
+    raw_rpm = _override(state, "spn190", raw_rpm, 2)
     return bytes(
         [
             0xFF,
@@ -174,7 +205,8 @@ def encode_eec1(state: SignalState) -> bytes:
 def encode_ccvs(state: SignalState) -> bytes:
     """CCVS PGN 65265 — SPN 84 wheel-based speed; other SPNs not available."""
     kmh = state.broadcast_speed_mph * KM_PER_MI
-    raw_speed = min(65535, max(0, round(kmh * 256)))
+    raw_speed = min(0xFAFF, max(0, round(kmh * 256)))
+    raw_speed = _override(state, "spn84", raw_speed, 2)
     return bytes(
         [
             0xFF,
@@ -192,7 +224,8 @@ def encode_ccvs(state: SignalState) -> bytes:
 def encode_vd(state: SignalState) -> bytes:
     """VD PGN 65248 — bytes 1-4 trip (SPN 244, not available), bytes 5-8 total (SPN 245), 0.125 km/bit."""
     dist_km = state.spn245_total_mi * KM_PER_MI
-    raw_dist = round(dist_km / 0.125)
+    raw_dist = min(0xFAFFFFFF, max(0, round(dist_km / 0.125)))
+    raw_dist = _override(state, "spn245", raw_dist, 4)
     return bytes(
         [
             0xFF,
@@ -210,6 +243,7 @@ def encode_vd(state: SignalState) -> bytes:
 def encode_hours(state: SignalState) -> bytes:
     """HOURS PGN 65253 — bytes 1-4 SPN 247 engine hours (0.05 h/bit); SPN 249 revolutions not available."""
     raw_hours = min(0xFAFFFFFF, max(0, round(state.spn247_engine_hours / 0.05)))
+    raw_hours = _override(state, "spn247", raw_hours, 4)
     return bytes(
         [
             raw_hours & 0xFF,

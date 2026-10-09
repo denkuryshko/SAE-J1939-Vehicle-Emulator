@@ -41,12 +41,25 @@ from j1939_emulator.ecu_identity import (
     VI_PRIORITY,
     EcuIdentity,
 )
+from j1939_emulator.faults import (
+    BROADCAST_PGNS,
+    MAX_REQUEST_DELAY_MS,
+    REQ_DELAY,
+    REQ_IGNORE,
+    REQ_NACK,
+    REQUEST_MODES,
+    REQUEST_TARGET_ALL,
+    FaultState,
+)
 from j1939_emulator.meters_store import save_meters
 from j1939_emulator.pgn import (
     CAN_ID_CCVS,
     CAN_ID_EEC1,
     CAN_ID_HOURS,
     CAN_ID_VD,
+    OVERRIDABLE_SPNS,
+    SPN_NORMAL,
+    SPN_OVERRIDE_MODES,
     SignalState,
     encode_ccvs,
     encode_eec1,
@@ -191,6 +204,7 @@ class _SchedEntry:
     arb_id: int
     period_fn: Callable[[], float]
     data_fn: Callable[[], bytes]
+    enabled_fn: Callable[[], bool] = lambda: True
     period_s: float = 0.02
     last_t: float = 0.0
     next_t: float = 0.0
@@ -253,12 +267,21 @@ class _TolerantSendBus:
     thread, and the ECU silently stops sending DM1 and finishing BAMs until RESET.
     """
 
-    def __init__(self, bus: can.BusABC, on_fail: Callable[[], None], trace: J1939Trace) -> None:
+    def __init__(
+        self,
+        bus: can.BusABC,
+        on_fail: Callable[[], None],
+        trace: J1939Trace,
+        silent: Callable[[], bool] = lambda: False,
+    ) -> None:
         self._bus = bus
         self._on_fail = on_fail
         self._trace = trace
+        self._silent = silent
 
     def send(self, msg: can.Message, timeout: float | None = None) -> None:
+        if self._silent():
+            return  # fault injection: the ECU sends nothing (claims and BAM packets included)
         data = bytes(msg.data)
         try:
             self._bus.send(msg, timeout)
@@ -339,7 +362,9 @@ class _PgnScheduler(threading.Thread):
     def __init__(
         self,
         bus: can.BusABC,
-        entries: list[tuple[int, Callable[[], float], Callable[[], bytes]]],
+        entries: list[
+            tuple[int, Callable[[], float], Callable[[], bytes], Callable[[], bool]]
+        ],
         on_tx: Callable[[], None],
         on_tx_fail: Callable[[], None],
     ) -> None:
@@ -354,13 +379,14 @@ class _PgnScheduler(threading.Thread):
         self._entries: dict[int, _SchedEntry] = {}
         self._heap: list[_HeapItem] = []
         now = time.monotonic()
-        for i, (arb_id, period_fn, data_fn) in enumerate(entries):
+        for i, (arb_id, period_fn, data_fn, enabled_fn) in enumerate(entries):
             period = max(0.001, float(period_fn()))
             entry = _SchedEntry(
                 entry_id=i,
                 arb_id=arb_id,
                 period_fn=period_fn,
                 data_fn=data_fn,
+                enabled_fn=enabled_fn,
                 period_s=period,
                 last_t=now,
                 next_t=now,  # fire immediately on start (matches prior behaviour)
@@ -460,20 +486,22 @@ class _PgnScheduler(threading.Thread):
                 for entry in due:
                     if self._stop_event.is_set():
                         break
-                    data = entry.data_fn()
-                    msg = can.Message(
-                        arbitration_id=entry.arb_id,
-                        data=data,
-                        is_extended_id=True,
-                        dlc=min(8, len(data)),
-                    )
-                    try:
-                        self._bus.send(msg, timeout=0.2)
-                        self._on_tx()
-                    except Exception:
-                        if self._stop_event.is_set():
-                            break
-                        self._on_tx_fail()
+                    # A switched-off PGN keeps its slot, so switching it back on resumes the cycle.
+                    if entry.enabled_fn():
+                        data = entry.data_fn()
+                        msg = can.Message(
+                            arbitration_id=entry.arb_id,
+                            data=data,
+                            is_extended_id=True,
+                            dlc=min(8, len(data)),
+                        )
+                        try:
+                            self._bus.send(msg, timeout=0.2)
+                            self._on_tx()
+                        except Exception:
+                            if self._stop_event.is_set():
+                                break
+                            self._on_tx_fail()
                     now = time.monotonic()
                     with self._lock:
                         entry.last_t = now
@@ -516,6 +544,7 @@ class EmulatorSession:
     signals: SignalState = field(default_factory=SignalState)
     identity: EcuIdentity = field(default_factory=EcuIdentity)
     diagnostics: DiagnosticState = field(default_factory=DiagnosticState)
+    faults: FaultState = field(default_factory=FaultState)
     bitrate: int = 500_000
     mode: EmulationMode = EmulationMode.VIRTUAL
     # Save odometer / engine hours per VIN between runs (see meters_store).
@@ -547,6 +576,11 @@ class EmulatorSession:
     )
     # Current trace while running; the last one stays readable after STOP.
     _trace: J1939Trace | None = field(default=None, init=False, repr=False)
+    # Replies held back by the request-delay fault, cancelled on STOP.
+    _delayed: dict[threading.Timer, RequestEvent] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _delayed_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     @property
     def running(self) -> bool:
@@ -678,6 +712,88 @@ class EmulatorSession:
         with self._lock:
             self._sync_dm1_locked()
 
+    # --- fault injection (runtime only; each change is noted in the trace) ---
+
+    def _fault_note(self, text: str) -> None:
+        if self._running and self._trace is not None:
+            self._trace.note(f"FAULT {text}")
+
+    def set_pgn_enabled(self, key: str, enabled: bool) -> None:
+        """Switch a cyclic broadcast (eec1, ccvs, vd, hours) on or off while running."""
+        if key not in BROADCAST_PGNS:
+            raise KeyError(f"Unknown PGN key: {key}")
+        enabled = bool(enabled)
+        if getattr(self.signals, f"{key}_enabled") == enabled:
+            return
+        setattr(self.signals, f"{key}_enabled", enabled)
+        acronym, pgn = BROADCAST_PGNS[key]
+        self._fault_note(f"{acronym} (PGN {pgn}) broadcast {'ON' if enabled else 'OFF'}")
+        self.signals.notify()
+
+    def set_spn_override(self, key: str, mode: str) -> None:
+        """Send an SPN's real value, or 'not available' / 'error' instead (broadcasts and replies)."""
+        if key not in OVERRIDABLE_SPNS:
+            raise KeyError(f"Unknown SPN key: {key}")
+        if mode not in SPN_OVERRIDE_MODES:
+            raise ValueError(f"Unknown SPN mode: {mode}")
+        if self.signals.spn_override.get(key, SPN_NORMAL) == mode:
+            return
+        if mode == SPN_NORMAL:
+            self.signals.spn_override.pop(key, None)
+        else:
+            self.signals.spn_override[key] = mode
+        self._fault_note(f"SPN {OVERRIDABLE_SPNS[key][0]} sends {mode.replace('_', ' ')}")
+        self.signals.notify()
+
+    def set_silent(self, silent: bool) -> None:
+        """Silent ECU: stays connected but sends nothing (broadcasts, replies, DM1, claims)."""
+        silent = bool(silent)
+        if self.faults.silent == silent:
+            return
+        if silent:
+            self._fault_note("ECU silent: stops sending everything")
+            self.faults.silent = True
+        else:
+            self.faults.silent = False
+            self._fault_note("ECU silent OFF: sending again")
+
+    def set_request_fault(
+        self, mode: str, target: int | None = None, delay_ms: int | None = None
+    ) -> None:
+        """How Requests are handled: normal, ignore, nack or delay; for one PGN or all."""
+        if mode not in REQUEST_MODES:
+            raise ValueError(f"Unknown request mode: {mode}")
+        f = self.faults
+        new_target = f.request_target if target is None else int(target)
+        new_delay = f.request_delay_ms if delay_ms is None else int(delay_ms)
+        new_delay = max(0, min(MAX_REQUEST_DELAY_MS, new_delay))
+        if (mode, new_target, new_delay) == (f.request_mode, f.request_target, f.request_delay_ms):
+            return
+        f.request_mode, f.request_target, f.request_delay_ms = mode, new_target, new_delay
+        target_text = "all PGNs" if new_target == REQUEST_TARGET_ALL else f"PGN {pgn_label(new_target)}"
+        detail = f" {new_delay} ms" if mode == REQ_DELAY else ""
+        self._fault_note(f"requests for {target_text}: {mode}{detail}")
+
+    def set_freeze(self, odometer: bool | None = None, hours: bool | None = None) -> None:
+        """Stop the odometer / engine hours from counting while the engine runs."""
+        s = self.signals
+        if odometer is not None and s.freeze_odometer != bool(odometer):
+            s.freeze_odometer = bool(odometer)
+            self._fault_note(f"odometer {'frozen' if odometer else 'counting again'}")
+        if hours is not None and s.freeze_hours != bool(hours):
+            s.freeze_hours = bool(hours)
+            self._fault_note(f"engine hours {'frozen' if hours else 'counting again'}")
+
+    def clear_faults(self) -> None:
+        """Everything back to normal: all broadcasts on, real values, replies, meters counting."""
+        self.set_silent(False)
+        for key in BROADCAST_PGNS:
+            self.set_pgn_enabled(key, True)
+        for key in OVERRIDABLE_SPNS:
+            self.set_spn_override(key, SPN_NORMAL)
+        self.set_request_fault("normal")
+        self.set_freeze(odometer=False, hours=False)
+
     def _bus_kwargs(self, channel: DetectedChannel) -> dict[str, Any]:
         kwargs = dict(channel.bus_kwargs)
         if channel.interface != "virtual":
@@ -710,7 +826,9 @@ class EmulatorSession:
         self._trace = J1939Trace(self.identity.source_address, self._trace_header(channel))
         # First listener, so a request is traced before the reply can-j1939 sends while handling it.
         self._ecu._notifier.listeners.insert(0, self._trace)
-        self._ecu._bus = _TolerantSendBus(self._bus, self._health.tx_failed, self._trace)
+        self._ecu._bus = _TolerantSendBus(
+            self._bus, self._health.tx_failed, self._trace, lambda: self.faults.silent
+        )
         self._ecu._notifier.add_listener(_RequestSniffer(self.identity.source_address, self._requests))
 
         name = Name(value=int(self.identity.name))
@@ -801,6 +919,9 @@ class EmulatorSession:
         ca = self._ca
         if not self._running or ca is None:
             return
+        if self.faults.silent:
+            self._resolve(event, "dropped: ECU silent (fault)")
+            return
         key = (pdu_format, pdu_specific)
         with self._pending_lock:
             pending = self._pending.get(key)
@@ -864,25 +985,75 @@ class EmulatorSession:
         if not self._running or self._ca is None:
             self._resolve(event, "ignored: ECU stopped")
             return
+        if self.faults.silent:
+            self._resolve(event, "ignored: ECU silent (fault)")
+            return
+        fault = self.faults.request_fault_for(pgn)
+        if fault == REQ_IGNORE:
+            self._resolve(event, "ignored (fault: ignore requests)")
+        elif fault == REQ_NACK:
+            self._send_nack(src_address, pgn, event, "NACK (fault: NACK requests)")
+        elif fault == REQ_DELAY:
+            delay_ms = self.faults.request_delay_ms
+            self._resolve(event, f"waiting {delay_ms} ms (fault: delay replies)")
+            self._answer_later(delay_ms, src_address, dest_address, pgn, event)
+        else:
+            self._answer(src_address, dest_address, pgn, event)
+
+    def _answer(
+        self, src_address: int, dest_address: int, pgn: int, event: RequestEvent,
+        done: str = "answered",
+    ) -> None:
+        """The normal reply to a Request: the PGN, a NACK, or nothing for a global request."""
         s = self.signals
         if pgn == PGN_VI:
-            self._send(VI_PDU_FORMAT, VI_PDU_SPECIFIC, VI_PRIORITY, self.identity.vin_payload, event)
+            self._send(
+                VI_PDU_FORMAT, VI_PDU_SPECIFIC, VI_PRIORITY, self.identity.vin_payload, event, done
+            )
         elif pgn in _REQUESTABLE:
             priority, encode = _REQUESTABLE[pgn]
-            self._send((pgn >> 8) & 0xFF, pgn & 0xFF, priority, lambda: encode(s), event)
+            self._send((pgn >> 8) & 0xFF, pgn & 0xFF, priority, lambda: encode(s), event, done)
         elif pgn == PGN_DM1:
-            self._send_dm1(event)
+            self._send_dm1(event, done)
         elif dest_address != _GLOBAL_ADDRESS:
             # J1939-21: a destination-specific request for an unsupported PGN gets a NACK
             # (sent global, requester in byte 5) so the requester need not wait for a timeout.
-            nack = [_ACK_CONTROL_NACK, 0xFF, 0xFF, 0xFF, src_address & 0xFF,
-                    pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF]
-            self._send(_ACK_PDU_FORMAT, _GLOBAL_ADDRESS, _ACK_PRIORITY, lambda: nack, event, "NACK (not supported)")
+            self._send_nack(src_address, pgn, event, "NACK (not supported)")
         else:
             self._resolve(event, "ignored: not supported (global request)")
 
-    def _send_dm1(self, event: RequestEvent | None = None) -> None:
-        self._send(DM1_PDU_FORMAT, DM1_PDU_SPECIFIC, DM1_PRIORITY, lambda: encode_dm1(self.diagnostics), event)
+    def _send_nack(self, src_address: int, pgn: int, event: RequestEvent, done: str) -> None:
+        nack = [_ACK_CONTROL_NACK, 0xFF, 0xFF, 0xFF, src_address & 0xFF,
+                pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF]
+        self._send(_ACK_PDU_FORMAT, _GLOBAL_ADDRESS, _ACK_PRIORITY, lambda: nack, event, done)
+
+    def _answer_later(
+        self, delay_ms: int, src_address: int, dest_address: int, pgn: int, event: RequestEvent
+    ) -> None:
+        """Request-delay fault: send the normal reply after delay_ms (current data at that time)."""
+
+        def fire() -> None:
+            with self._delayed_lock:
+                if self._delayed.pop(timer, None) is None:
+                    return  # cancelled by STOP
+            if self.faults.silent:
+                self._resolve(event, "dropped: ECU silent (fault)")
+                return
+            self._answer(
+                src_address, dest_address, pgn, event, f"answered after {delay_ms} ms (fault delay)"
+            )
+
+        timer = threading.Timer(delay_ms / 1000.0, fire)
+        timer.daemon = True
+        with self._delayed_lock:
+            self._delayed[timer] = event
+        timer.start()
+
+    def _send_dm1(self, event: RequestEvent | None = None, done: str = "answered") -> None:
+        self._send(
+            DM1_PDU_FORMAT, DM1_PDU_SPECIFIC, DM1_PRIORITY, lambda: encode_dm1(self.diagnostics),
+            event, done,
+        )
 
     def _dm1_tick(self, _cookie) -> bool:
         """can-j1939 timer callback; returning True keeps the 1 s DM1 cycle running."""
@@ -930,6 +1101,11 @@ class EmulatorSession:
                 for event in item.events:
                     self._resolve(event, "dropped: ECU stopped")
             self._pending.clear()
+        with self._delayed_lock:
+            delayed, self._delayed = self._delayed, {}
+        for timer, event in delayed.items():
+            timer.cancel()
+            self._resolve(event, "dropped: ECU stopped")
 
         if self._ca is not None:
             try:
@@ -982,16 +1158,18 @@ class EmulatorSession:
     def _start_scheduler_locked(self) -> None:
         assert self._bus is not None
         s = self.signals
-        specs = [
-            (s.eec1_enabled, CAN_ID_EEC1, self._ms(lambda: s.cycle_eec1_ms), lambda: encode_eec1(s)),
-            (s.ccvs_enabled, CAN_ID_CCVS, self._ms(lambda: s.cycle_ccvs_ms), lambda: encode_ccvs(s)),
-            (s.vd_enabled, CAN_ID_VD, self._ms(lambda: s.cycle_vd_ms), lambda: encode_vd(s)),
-            (s.hours_enabled, CAN_ID_HOURS, self._ms(lambda: s.cycle_hours_ms), lambda: encode_hours(s)),
-        ]
+        f = self.faults
+        # Every PGN gets a slot; *_enabled and the silent fault are checked on each send, so
+        # broadcasts can be switched on and off while running.
         entries = [
-            (arb_id, period_fn, data_fn)
-            for enabled, arb_id, period_fn, data_fn in specs
-            if enabled
+            (CAN_ID_EEC1, self._ms(lambda: s.cycle_eec1_ms), lambda: encode_eec1(s),
+             lambda: s.eec1_enabled and not f.silent),
+            (CAN_ID_CCVS, self._ms(lambda: s.cycle_ccvs_ms), lambda: encode_ccvs(s),
+             lambda: s.ccvs_enabled and not f.silent),
+            (CAN_ID_VD, self._ms(lambda: s.cycle_vd_ms), lambda: encode_vd(s),
+             lambda: s.vd_enabled and not f.silent),
+            (CAN_ID_HOURS, self._ms(lambda: s.cycle_hours_ms), lambda: encode_hours(s),
+             lambda: s.hours_enabled and not f.silent),
         ]
         bus = self._bus if self._trace is None else _BroadcastObserver(self._bus, self._trace)
         sched = _PgnScheduler(bus, entries, self._on_tx, self._health.tx_failed)

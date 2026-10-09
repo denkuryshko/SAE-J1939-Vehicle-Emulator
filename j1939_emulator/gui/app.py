@@ -28,6 +28,7 @@ from j1939_emulator.gui.widgets import (
     build_ccvs,
     build_diagnostics_pane,
     build_ecu_pane,
+    build_faults_pane,
     build_logs_pane,
     build_traffic_pane,
     build_eec1,
@@ -37,6 +38,7 @@ from j1939_emulator.gui.widgets import (
 )
 from j1939_emulator.pgn import SignalState, all_payloads
 from j1939_emulator.diagnostics import DiagnosticState
+from j1939_emulator.faults import active_faults
 from j1939_emulator.ecu_identity import EcuIdentity
 
 BITRATE_OPTIONS = {
@@ -346,6 +348,10 @@ def _build_page(state: GuiState) -> None:
                         tab_traffic = ui.button().classes("tab-btn").props("flat dense")
                         with tab_traffic:
                             ui.label("Traffic")
+                        tab_faults = ui.button().classes("tab-btn").props("flat dense")
+                        with tab_faults:
+                            ui.label("Faults")
+                            faults_tab_pill = ui.label("None").classes("tab-pill")
 
                     pane_signals = ui.element("section")
                     with pane_signals:
@@ -360,10 +366,10 @@ def _build_page(state: GuiState) -> None:
                         sig.clear_listeners()
 
                         build_ignition(sig)
-                        build_eec1(sig, state.payload_labels)
-                        build_ccvs(sig, state.payload_labels)
-                        build_vd(sig, state.payload_labels)
-                        build_hours(sig, state.payload_labels)
+                        build_eec1(session, state.payload_labels)
+                        build_ccvs(session, state.payload_labels)
+                        build_vd(session, state.payload_labels)
+                        build_hours(session, state.payload_labels)
 
                     pane_ecu = ui.element("section")
                     with pane_ecu:
@@ -380,6 +386,11 @@ def _build_page(state: GuiState) -> None:
                         on_traffic_shown = build_traffic_pane(session)
                     pane_traffic.set_visibility(False)
 
+                    pane_faults = ui.element("section")
+                    with pane_faults:
+                        build_faults_pane(session, state.ui_refs)
+                    pane_faults.set_visibility(False)
+
                 with ui.element("aside").classes("work-logs"):
                     build_logs_pane(session, state.ui_refs)
                     logs_tab_pill = state.ui_refs["logs_pill"]
@@ -390,6 +401,8 @@ def _build_page(state: GuiState) -> None:
                 foot_sa = ui.label(f"SA: 0x{session.identity.source_address:02X}")
                 foot_bitrate = ui.label(f"{state.bitrate // 1000} kbit/s")
             with ui.element("div").classes("footer-right font-mono"):
+                foot_faults = ui.label("").classes("footer-faults")
+                foot_faults.set_visibility(False)
                 foot_peers = ui.label("Other nodes: 0")
                 foot_tx = ui.label("TX Broadcast: 0 frames")
                 foot_dtc = ui.label("Active Faults: 0 DTCs").style("color:#1F9D55")
@@ -582,11 +595,13 @@ def _build_page(state: GuiState) -> None:
         pane_ecu.set_visibility(name == "ecu")
         pane_diag.set_visibility(name == "diagnostics")
         pane_traffic.set_visibility(name == "traffic")
+        pane_faults.set_visibility(name == "faults")
         for btn, key in (
             (tab_signals, "signals"),
             (tab_ecu, "ecu"),
             (tab_diag, "diagnostics"),
             (tab_traffic, "traffic"),
+            (tab_faults, "faults"),
         ):
             btn.classes(remove="active")
             if key == name:
@@ -600,7 +615,23 @@ def _build_page(state: GuiState) -> None:
         st = session.stats()
         n_requests = len(session.recent_requests())
         logs_tab_pill.set_text(f"{n_requests} Request{'' if n_requests == 1 else 's'}")
-        if st.running:
+        faults_on = active_faults(sig, session.faults)
+        faults_tab_pill.set_text(f"{len(faults_on)} Active" if faults_on else "None")
+        if faults_on:
+            faults_tab_pill.classes(add="warn")
+            foot_faults.set_text(f"⚠ Faults: {len(faults_on)} active")
+        else:
+            faults_tab_pill.classes(remove="warn")
+        foot_faults.set_visibility(bool(faults_on))
+        if st.running and session.faults.silent:
+            # Silent is on purpose: say so instead of a bus-health state (nothing is sent).
+            top_pill.classes(remove="stopped running error", add="warn")
+            top_status.set_text("ECU SILENT · FAULT INJECTED")
+            last_health[0] = st.bus_health
+            foot_status.set_text("● ECU Silent (fault)")
+            btn_start.disable()
+            btn_stop.enable()
+        elif st.running:
             health_text = BUS_HEALTH_TEXT.get(st.bus_health)
             if health_text is None:
                 top_pill.classes(remove="stopped warn error", add="running")
@@ -684,6 +715,7 @@ def _build_page(state: GuiState) -> None:
     tab_ecu.on_click(lambda: switch_tab("ecu"))
     tab_diag.on_click(lambda: switch_tab("diagnostics"))
     tab_traffic.on_click(lambda: switch_tab("traffic"))
+    tab_faults.on_click(lambda: switch_tab("faults"))
 
     ui.timer(0.2, update_chrome)
 

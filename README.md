@@ -239,6 +239,24 @@ The **Traffic** tab shows every frame on the bus as it happens, including the cy
 - **Clear** empties the view only. The ECU, the counters and the trace file are not touched.
 - The view keeps the last 1000 cyclic broadcasts and, separately, the last 1000 other frames, dropping the oldest first. The cyclic ones cover roughly the last 15–20 seconds at EEC1's 20 ms cycle; requests, replies and transport frames stay much longer, because the broadcasts can no longer push them out.
 
+### Fault injection
+
+The **Faults** tab makes the ECU misbehave on purpose, to check how an ELD copes with a missing, broken or slow engine ECU. Faults are runtime only: nothing is saved to the config, they survive STOP / START but not a restart of the app. Every change is written to the J1939 trace as a `FAULT …` line, so a trace file shows exactly when each fault started and ended.
+
+| Fault | What the ELD sees | Typical check |
+|-------|-------------------|---------------|
+| **ECU silent** | Nothing at all from SA 0x00: no broadcasts, no replies, no DM1, no address claim. The ECU stays connected; requests are logged as ignored. | Engine synchronization / ECM connectivity malfunction |
+| **Broadcast off** (per PGN) | EEC1, CCVS, VD or HOURS stops arriving; the others keep going. Requests for it are still answered. Also the **● ON / ○ OFF** pill on each card of the Signals tab. | Missing speed / odometer / engine hours |
+| **SPN: not available / error** | `0xFF…` or `0xFE…` instead of the value, in broadcasts and replies alike. The card shows a red **SPN …: ERROR** chip. | Sensor missing or broken |
+| **Requests: Ignore** | No reply; the ELD must time out and retry. | Request retry logic |
+| **Requests: NACK** | A NACK (PGN 59392) even for a supported PGN. | Fallback when the ECU refuses |
+| **Requests: Delay** | The reply after the set delay (200 ms … 10 s), with the data current at that moment. | Timeouts, late VIN |
+| **Freeze odometer / engine hours** | The meter stops counting while the engine runs. | Driving with a stuck odometer |
+
+Requests faults apply to **All PGNs** or one PGN (VIN, VD, HOURS, EEC1, CCVS, DM1). To make the odometer jump or run backwards use the ± buttons on the Signals tab; the VIN can be changed mid-trip on ECU & Vehicle.
+
+While any fault is on, the Faults tab pill and the footer show how many; **ECU silent** also turns the top status amber (**ECU SILENT · FAULT INJECTED**) so it is not mistaken for a wiring problem. **Clear All Faults** puts everything back to normal.
+
 ### Bus modes
 
 | Mode | Channels | Hardware |
