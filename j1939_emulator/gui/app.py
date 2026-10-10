@@ -340,15 +340,15 @@ def _build_page(state: GuiState) -> None:
                         tab_signals = ui.button().classes("tab-btn active").props("flat dense")
                         with tab_signals:
                             ui.label("Signals (PGNs & SPNs)")
-                            ui.label("4 PGNs").classes("tab-pill")
                         tab_ecu = ui.button().classes("tab-btn").props("flat dense")
                         with tab_ecu:
                             ui.label("ECU & Vehicle (VIN)")
                             ui.label(f"Node 0x{session.identity.source_address:02X}").classes("tab-pill")
                         tab_diag = ui.button().classes("tab-btn").props("flat dense")
                         with tab_diag:
-                            ui.label("Diagnostics (2 DTCs)")
-                            diag_tab_pill = ui.label("2 Supported").classes("tab-pill")
+                            ui.label("Diagnostics (DTC)")
+                            diag_tab_pill = ui.label("").classes("tab-pill warn")
+                            diag_tab_pill.set_visibility(False)
                             state.ui_refs["diag_tab_pill"] = diag_tab_pill
                         tab_traffic = ui.button().classes("tab-btn").props("flat dense")
                         with tab_traffic:
@@ -722,12 +722,8 @@ def _build_page(state: GuiState) -> None:
             foot_dtc.style("color:#1F9D55")
         pill = state.ui_refs.get("diag_tab_pill")
         if pill is not None:
-            if c > 0:
-                pill.set_text(f"{c} Active")
-                pill.classes(add="warn")
-            else:
-                pill.set_text("2 Supported")
-                pill.classes(remove="warn")
+            pill.set_text(f"{c} Active")
+            pill.set_visibility(c > 0)
 
     def refresh_payloads() -> None:
         payloads = all_payloads(sig)

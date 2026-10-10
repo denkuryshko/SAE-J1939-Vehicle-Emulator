@@ -1267,12 +1267,8 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
                 btn2.set_text("Inject Fault")
             pill = refs.get("diag_tab_pill")
             if pill is not None:
-                if c > 0:
-                    pill.set_text(f"{c} Active")
-                    pill.classes(add="warn")
-                else:
-                    pill.set_text("2 Supported")
-                    pill.classes(remove="warn")
+                pill.set_text(f"{c} Active")
+                pill.set_visibility(c > 0)
             foot = refs.get("foot_dtc")
             if foot is not None:
                 if c > 0:

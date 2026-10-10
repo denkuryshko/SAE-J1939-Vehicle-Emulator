@@ -249,7 +249,7 @@ body, .nicegui-content {
 }
 .sig-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 .signal-big {
-  font-size: 18px; font-weight: 700; line-height: 1.1; color: #1F2A37;
+  font-size: 18px; font-weight: 700; line-height: 1.1; color: #9D5C73;
   font-variant-numeric: tabular-nums;
 }
 .signal-unit { font-size: 12px; font-weight: 600; color: #5B6775; }
