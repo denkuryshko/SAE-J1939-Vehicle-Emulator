@@ -5,6 +5,7 @@ from j1939_emulator.pgn import (
     encode_ccvs,
     encode_eec1,
     encode_hours,
+    encode_hrvd,
     encode_vd,
 )
 
@@ -22,14 +23,20 @@ def test_eec1_engine_speed_bytes_4_5_and_rest_not_available():
 
 def test_ccvs_speed_is_km_per_h_times_256():
     data = encode_ccvs(SignalState(spn84_speed_mph=60))
-    assert int.from_bytes(data[1:3], "little") == round(60 * 1.60934 * 256)
+    assert int.from_bytes(data[1:3], "little") == round(60 * 1.609344 * 256)
     assert data[0] == 0xFF and data[3:] == b"\xff" * 5
 
 
 def test_vd_total_distance_in_bytes_5_8_trip_not_available():
     data = encode_vd(SignalState(spn245_total_mi=1000))
     assert data[:4] == b"\xff" * 4
-    assert int.from_bytes(data[4:], "little") == round(1000 * 1.60934 / 0.125)
+    assert int.from_bytes(data[4:], "little") == round(1000 * 1.609344 / 0.125)
+
+
+def test_hrvd_same_odometer_5_m_per_bit_in_bytes_1_4_trip_not_available():
+    data = encode_hrvd(SignalState(spn245_total_mi=1000))
+    assert int.from_bytes(data[:4], "little") == 321869  # 1609344 m / 5
+    assert data[4:] == b"\xff" * 4
 
 
 def test_hours_spn247_0_05_h_per_bit():
@@ -69,6 +76,20 @@ def test_ignition_switch_sets_idle_or_zero_rpm():
     assert (s.engine_running, s.spn190_rpm) == (True, 650)
     s.set_ignition(False)
     assert (s.engine_running, s.spn190_rpm) == (False, 0)
+
+
+def test_engine_speed_flips_ignition():
+    s = SignalState(spn190_rpm=800, engine_running=True)
+    s.set_engine_speed(0)
+    assert not s.engine_running
+    s.set_engine_speed(300)  # below 600 rpm: switch stays where it is
+    assert not s.engine_running
+    s.set_engine_speed(600)
+    assert s.engine_running
+    s.set_engine_speed(300)
+    assert s.engine_running
+    s.set_spn("eec1.spn190_rpm", "0")
+    assert not s.engine_running
 
 
 def test_key_on_engine_off_sends_zero_and_keeps_settings():

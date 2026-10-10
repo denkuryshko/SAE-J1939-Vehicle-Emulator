@@ -1,0 +1,34 @@
+# The engine ECU disappears from the bus while driving, then comes back.
+# Checks: the ELD notices the loss of engine data and records a malfunction /
+# data diagnostic event, and recovers when the ECU is back.
+# FMCSA's engine synchronization malfunction needs more than 30 minutes without
+# engine data in 24 hours: for that test change "4m" below to e.g. "34m".
+
+name = "ECU disconnect while driving"
+description = "Driving at 45 mph, the ECU goes silent for 2 minutes, comes back, stop. About 6.5 minutes."
+
+[[step]]
+at = "0s"
+ignition = "run"
+
+[[step]]
+at = "20s"
+ramp = { speed_mph = 45, rpm = 1450, over = "30s" }
+
+[[step]]
+at = "2m"
+fault = { silent = true }
+note = "ECU gone: no broadcasts, no replies. The ELD should flag missing engine data"
+
+[[step]]
+at = "4m"
+fault = { silent = false }
+note = "ECU back"
+
+[[step]]
+at = "5m"
+ramp = { speed_mph = 0, rpm = 650, over = "30s" }
+
+[[step]]
+at = "6m15s"
+ignition = "on"

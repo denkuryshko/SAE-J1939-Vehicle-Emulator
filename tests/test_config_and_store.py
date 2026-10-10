@@ -89,3 +89,34 @@ def test_ignition_from_config(tmp_path):
     assert not cfg.signals.engine_running
     with pytest.raises(ValueError):
         load_config(_write(tmp_path, BUS + '[vehicle]\nignition = "off"\n'))
+
+
+def test_hrvd_section_switches_and_times_the_broadcast(tmp_path):
+    assert load_config(_write(tmp_path, BUS)).signals.hrvd_enabled
+    cfg = load_config(_write(tmp_path, BUS + "[pgn.hrvd]\nenabled = false\ncycle_ms = 500\n"))
+    assert not cfg.signals.hrvd_enabled
+    assert cfg.signals.cycle_hrvd_ms == 500
+
+
+def test_dtc_list_replaces_the_built_in_dtcs(tmp_path):
+    cfg = load_config(_write(tmp_path, BUS + (
+        "[[diagnostics.dtc]]\nspn = 100\nfmi = 1\nlamp = \"red\"\nname = \"Oil pressure low\"\n"
+        "active = true\n\n[[diagnostics.dtc]]\nspn = 3216\nfmi = 2\noc = 4\n"
+    )))
+    dtcs = cfg.diagnostics.dtcs
+    assert [(d.key, d.lamp, d.oc, d.active) for d in dtcs] == [
+        ("spn100_fmi1", "red", 1, True), ("spn3216_fmi2", "amber", 4, False),
+    ]
+    assert dtcs[0].name == "Oil pressure low"
+
+
+def test_dtc_flags_old_and_new(tmp_path):
+    cfg = load_config(_write(tmp_path, BUS + "[diagnostics]\ndtc_spn190_fmi0 = true\n"
+                                            "inject_coolant_voltage_high = true\n"))
+    assert {d.key for d in cfg.diagnostics.active} == {"spn110_fmi3", "spn190_fmi0"}
+    with pytest.raises(ValueError, match="not in the DTC list"):
+        load_config(_write(tmp_path, BUS + "[diagnostics]\ndtc_spn100_fmi1 = true\n"))
+    with pytest.raises(ValueError, match="dtc #1: unknown key"):
+        load_config(_write(tmp_path, BUS + "[[diagnostics.dtc]]\nspn = 1\nfmi = 1\nlmap = 1\n"))
+    with pytest.raises(ValueError, match="dtc #1: DTC lamp"):
+        load_config(_write(tmp_path, BUS + "[[diagnostics.dtc]]\nspn = 1\nfmi = 1\nlamp = \"x\"\n"))

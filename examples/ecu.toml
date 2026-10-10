@@ -18,9 +18,21 @@ vin = "1HTMMAAL5GH123456"
 persist_meters = true    # keep odometer / engine hours per VIN between runs
 ignition = "run"         # "run" = engine running | "on" = key ON, engine off (0 rpm / 0 mph)
 
-[diagnostics]
-dtc_spn110_fmi3 = false
-dtc_spn190_fmi0 = false
+# DTCs the Diagnostics tab can inject (sent on DM1 while active; DM11 clears them).
+# lamp = "amber" | "red" | "mil" | "protect"; oc = occurrence count; active = on at launch.
+[[diagnostics.dtc]]
+spn = 110
+fmi = 3
+lamp = "amber"
+name = "Engine Coolant Temp Voltage High"
+description = "Voltage Above Normal, Or Shorted To High Source."
+
+[[diagnostics.dtc]]
+spn = 190
+fmi = 0
+lamp = "red"
+name = "Engine Crankshaft Overspeed"
+description = "Data Valid But Above Normal Operational Range - Most Severe Level."
 
 [pgn.eec1]
 enabled = true
@@ -36,6 +48,10 @@ spn84_speed_mph = 0
 enabled = true
 cycle_ms = 1000
 spn245_total_mi = 248912.4
+
+[pgn.hrvd]
+enabled = true
+cycle_ms = 1000
 
 [pgn.hours]
 enabled = true

@@ -8,16 +8,18 @@ version = "2.0.0"
 description = "SAE J1939 vehicle ECU emulator (python-can + can-j1939)"
 readme = "README.md"
 requires-python = ">=3.11"
+# Upper bounds: a new major (or, for can-j1939, minor) release must be tested first.
+# The session reaches into can-j1939 internals (ECU notifier and bus), so it is held to 2.0.x.
 dependencies = [
-  "python-can[gs-usb,serial]>=4.3",
-  "can-j1939>=2.0",
-  "nicegui>=2.0",
-  "libusb-package>=1.0",
+  "python-can[gs-usb,serial]>=4.3,<5",
+  "can-j1939>=2.0.12,<2.1",
+  "nicegui>=3.0,<4",
+  "libusb-package>=1.0,<2",
   "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0,<10"]
 
 [project.scripts]
 j1939-emulator = "j1939_emulator.cli:main"
@@ -26,4 +28,5 @@ j1939-emulator = "j1939_emulator.cli:main"
 include = ["j1939_emulator*"]
 
 [tool.setuptools.package-data]
+"j1939_emulator" = ["scenarios/*.toml"]
 "j1939_emulator.gui" = ["assets/*"]
