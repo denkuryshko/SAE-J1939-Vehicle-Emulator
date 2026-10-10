@@ -20,6 +20,15 @@ from j1939_emulator.config import IGNITION_VALUES, load_config
 from j1939_emulator.ecu_identity import vin_check_digit_warning
 from j1939_emulator.meters_store import restore_meters
 from j1939_emulator.pgn import all_payloads
+from j1939_emulator.scenario import (
+    RunState,
+    ScenarioError,
+    ScenarioRunner,
+    find_scenario,
+    format_time,
+    list_scenarios,
+    load_scenario,
+)
 
 
 def _quiet_third_party_noise() -> None:
@@ -123,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not auto-start emulation in CLI mode",
     )
+    p.add_argument(
+        "--scenario",
+        type=str,
+        help="CLI mode: play this scenario after START (built-in name like drive-and-stop, or a .toml path)",
+    )
     return p
 
 
@@ -141,11 +155,51 @@ get <key>                — read SPN (e.g. get eec1.spn190_rpm)
 set <key> <value>        — change SPN (e.g. set eec1.spn190_rpm 2100)
 vin [value]              — show or set 17-char VIN
 dtc 1|2|both on|off      — inject/clear DM1 faults
+scenario                 — scenario status; scenario list | run <name|file> | pause | resume | stop
 stop | start | reset | help | quit"""
 
 
 def _ignition_name(signals) -> str:
     return "run" if signals.engine_running else "on (engine off)"
+
+
+def _scenario_command(runner: ScenarioRunner, rest: list[str]) -> None:
+    """scenario [list | run <name|file> | pause | resume | stop]; no argument = status."""
+    sub = rest[0].lower() if rest else "status"
+    if sub == "list":
+        for label, path in list_scenarios():
+            try:
+                s = load_scenario(path)
+                print(f"{path.stem:<24} {format_time(s.duration):>7}  {s.name}  [{label.split(':')[0]}]")
+            except ScenarioError as exc:
+                print(f"{path.stem:<24}   error  {exc}")
+        return
+    if sub == "run":
+        if len(rest) < 2:
+            print("usage: scenario run <name|file.toml>  (see: scenario list)")
+            return
+        try:
+            scenario = load_scenario(find_scenario(rest[1]))
+            runner.start(scenario)
+        except (ScenarioError, RuntimeError) as exc:
+            print(f"error: {exc}")
+            return
+        print(f"scenario {scenario.name!r} running: {len(scenario.steps)} steps, {format_time(scenario.duration)}")
+        return
+    if sub in ("pause", "resume", "stop"):
+        getattr(runner, sub)()
+    s = runner.scenario
+    if s is None:
+        print("no scenario run yet (scenario list, scenario run <name>)")
+        return
+    nxt = s.steps[runner.done] if runner.active and runner.done < len(s.steps) else None
+    extra = f" error={runner.error}" if runner.state is RunState.FAILED else ""
+    print(
+        f"scenario={s.name!r} state={runner.state.value} "
+        f"time={format_time(runner.elapsed())}/{format_time(s.duration)} "
+        f"steps={runner.done}/{len(s.steps)}{extra}"
+        + (f" next=@{format_time(nxt.at)} {'; '.join(nxt.describe())}" if nxt else "")
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -264,7 +318,7 @@ def run_cli(args: argparse.Namespace) -> int:
         print(f"warning: {warning}")
     print(
         "Commands: channels | channel | mode | bitrate | info | "
-        "get/set | vin | dtc | status | payloads | requests | trace | stop/start/reset | help | quit"
+        "get/set | vin | dtc | scenario | status | payloads | requests | trace | stop/start/reset | help | quit"
     )
 
     if start:
@@ -278,6 +332,13 @@ def run_cli(args: argparse.Namespace) -> int:
         except Exception as exc:
             print(f"error: failed to start: {exc}", file=sys.stderr)
             return 3
+
+    runner = ScenarioRunner(session)
+    if args.scenario:
+        if not session.running:
+            print("error: --scenario needs a running ECU (leave out --no-start)", file=sys.stderr)
+            return 2
+        _scenario_command(runner, ["run", args.scenario])
 
     try:
         while True:
@@ -432,6 +493,9 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"bus={st.bus_health.value}\n"
                     f"peers={st.peers}"
                 )
+                continue
+            if cmd == "scenario":
+                _scenario_command(runner, rest)
                 continue
             if cmd == "status":
                 st = session.stats()
@@ -601,6 +665,7 @@ def run_cli(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted")
     finally:
+        runner.stop()
         session.stop()
         print("Bus closed.")
     return 0

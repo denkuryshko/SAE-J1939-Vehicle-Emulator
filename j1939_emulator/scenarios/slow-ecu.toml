@@ -1,0 +1,32 @@
+# The ECU answers requests badly: first slowly, then not at all, then with a NACK.
+# Checks: the ELD retries, times out sensibly and still gets the VIN in the end.
+# ELDs usually ask for the VIN when they connect: reconnect (or restart) the ELD at the
+# start of each phase. The Logs panel shows how every request was answered.
+
+name = "Slow ECU (VIN requests)"
+description = "VIN replies delayed 3 s, then ignored, then NACKed, then normal; 2 minutes each, engine idling."
+
+[[step]]
+at = "0s"
+ignition = "run"
+fault = { requests = { mode = "delay", pgn = "vin", delay = "3s" } }
+note = "Phase 1: VIN arrives 3 s late. Reconnect the ELD now"
+
+[[step]]
+at = "2m"
+fault = { requests = { mode = "ignore", pgn = "vin" } }
+note = "Phase 2: VIN requests get no reply. Reconnect the ELD now"
+
+[[step]]
+at = "4m"
+fault = { requests = { mode = "nack", pgn = "vin" } }
+note = "Phase 3: VIN requests are refused (NACK). Reconnect the ELD now"
+
+[[step]]
+at = "6m"
+clear_faults = true
+note = "Phase 4: normal again. The ELD should get the VIN"
+
+[[step]]
+at = "8m"
+note = "End"

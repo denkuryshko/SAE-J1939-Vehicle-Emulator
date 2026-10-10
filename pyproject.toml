@@ -26,4 +26,5 @@ j1939-emulator = "j1939_emulator.cli:main"
 include = ["j1939_emulator*"]
 
 [tool.setuptools.package-data]
+"j1939_emulator" = ["scenarios/*.toml"]
 "j1939_emulator.gui" = ["assets/*"]

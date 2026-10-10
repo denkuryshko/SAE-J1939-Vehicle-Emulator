@@ -714,9 +714,13 @@ class EmulatorSession:
 
     # --- fault injection (runtime only; each change is noted in the trace) ---
 
-    def _fault_note(self, text: str) -> None:
+    def note(self, text: str) -> None:
+        """A line in the J1939 trace of the current run (scenario steps, faults); none if stopped."""
         if self._running and self._trace is not None:
-            self._trace.note(f"FAULT {text}")
+            self._trace.note(text)
+
+    def _fault_note(self, text: str) -> None:
+        self.note(f"FAULT {text}")
 
     def set_pgn_enabled(self, key: str, enabled: bool) -> None:
         """Switch a cyclic broadcast (eec1, ccvs, vd, hours) on or off while running."""

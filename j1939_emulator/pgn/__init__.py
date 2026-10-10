@@ -75,20 +75,26 @@ class SignalState:
         for cb in list(self._listeners):
             cb()
 
-    def set_ignition(self, running: bool) -> None:
+    def set_ignition(self, running: bool, notify: bool = True) -> None:
         """Ignition switch: engine running starts at idle, key ON / engine off drops to 0 rpm."""
         self.engine_running = running
         self.spn190_rpm = IDLE_RPM if running else 0.0
-        self.notify()
+        if notify:
+            self.notify()
 
-    def set_engine_speed(self, rpm: float) -> None:
-        """Set Engine Speed; 0 rpm turns the key to ON / engine off, >= 600 rpm to engine running."""
+    def set_engine_speed(self, rpm: float, notify: bool = True) -> None:
+        """Set Engine Speed; 0 rpm turns the key to ON / engine off, >= 600 rpm to engine running.
+
+        notify=False for many small steps from another thread (scenario ramps): the encoders
+        read the value directly, and the GUI follows by polling.
+        """
         self.spn190_rpm = float(rpm)
         if self.spn190_rpm <= 0:
             self.engine_running = False
         elif self.spn190_rpm >= RUNNING_RPM:
             self.engine_running = True
-        self.notify()
+        if notify:
+            self.notify()
 
     @property
     def broadcast_rpm(self) -> float:

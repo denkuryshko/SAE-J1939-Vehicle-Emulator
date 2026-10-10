@@ -30,6 +30,7 @@ from j1939_emulator.gui.widgets import (
     build_ecu_pane,
     build_faults_pane,
     build_logs_pane,
+    build_scenarios_pane,
     build_traffic_pane,
     build_eec1,
     build_ignition,
@@ -39,6 +40,7 @@ from j1939_emulator.gui.widgets import (
 from j1939_emulator.pgn import SignalState, all_payloads
 from j1939_emulator.diagnostics import DiagnosticState
 from j1939_emulator.faults import active_faults
+from j1939_emulator.scenario import RunState, ScenarioRunner, format_time
 from j1939_emulator.ecu_identity import EcuIdentity
 
 BITRATE_OPTIONS = {
@@ -75,6 +77,8 @@ MODE_OPTIONS = {
 class GuiState:
     def __init__(self, session: EmulatorSession) -> None:
         self.session = session
+        # One runner for the app: a scenario keeps playing when the browser tab is reloaded.
+        self.runner = ScenarioRunner(session)
         self.mode = EmulationMode.VIRTUAL
         self.channels: list[DetectedChannel] = []
         self.channel_uid: str | None = None
@@ -169,6 +173,7 @@ def run_gui(
 
     @app.on_shutdown
     def _shutdown() -> None:
+        state.runner.stop()
         session.stop()
 
     app.add_static_files("/assets", str(Path(__file__).parent / "assets"))
@@ -352,6 +357,10 @@ def _build_page(state: GuiState) -> None:
                         with tab_faults:
                             ui.label("Faults")
                             faults_tab_pill = ui.label("None").classes("tab-pill")
+                        tab_scen = ui.button().classes("tab-btn").props("flat dense")
+                        with tab_scen:
+                            ui.label("Scenarios")
+                            scen_tab_pill = ui.label("").classes("tab-pill")
 
                     pane_signals = ui.element("section")
                     with pane_signals:
@@ -361,6 +370,12 @@ def _build_page(state: GuiState) -> None:
                             ui.label(
                                 "SAE J1939-71 Application Layer · Real-Time 4 PGN CAN Broadcast"
                             ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+
+                        scen_banner = ui.element("div").classes("scenario-banner font-mono")
+                        with scen_banner:
+                            ui.icon("play_circle").style("font-size:16px;")
+                            scen_banner_text = ui.label()
+                        scen_banner.set_visibility(False)
 
                         state.payload_labels.clear()
                         sig.clear_listeners()
@@ -391,6 +406,11 @@ def _build_page(state: GuiState) -> None:
                         build_faults_pane(session, state.ui_refs)
                     pane_faults.set_visibility(False)
 
+                    pane_scen = ui.element("section")
+                    with pane_scen:
+                        build_scenarios_pane(session, state.runner, state.ui_refs)
+                    pane_scen.set_visibility(False)
+
                 with ui.element("aside").classes("work-logs"):
                     build_logs_pane(session, state.ui_refs)
                     logs_tab_pill = state.ui_refs["logs_pill"]
@@ -401,6 +421,8 @@ def _build_page(state: GuiState) -> None:
                 foot_sa = ui.label(f"SA: 0x{session.identity.source_address:02X}")
                 foot_bitrate = ui.label(f"{state.bitrate // 1000} kbit/s")
             with ui.element("div").classes("footer-right font-mono"):
+                foot_scen = ui.label("").classes("footer-scenario")
+                foot_scen.set_visibility(False)
                 foot_faults = ui.label("").classes("footer-faults")
                 foot_faults.set_visibility(False)
                 foot_peers = ui.label("Other nodes: 0")
@@ -596,12 +618,14 @@ def _build_page(state: GuiState) -> None:
         pane_diag.set_visibility(name == "diagnostics")
         pane_traffic.set_visibility(name == "traffic")
         pane_faults.set_visibility(name == "faults")
+        pane_scen.set_visibility(name == "scenarios")
         for btn, key in (
             (tab_signals, "signals"),
             (tab_ecu, "ecu"),
             (tab_diag, "diagnostics"),
             (tab_traffic, "traffic"),
             (tab_faults, "faults"),
+            (tab_scen, "scenarios"),
         ):
             btn.classes(remove="active")
             if key == name:
@@ -623,6 +647,21 @@ def _build_page(state: GuiState) -> None:
         else:
             faults_tab_pill.classes(remove="warn")
         foot_faults.set_visibility(bool(faults_on))
+        runner = state.runner
+        if runner.active and runner.scenario is not None:
+            icon = "▶" if runner.state is RunState.RUNNING else "⏸"
+            clock = f"{format_time(runner.elapsed())} / {format_time(runner.scenario.duration)}"
+            scen_tab_pill.set_text(f"{icon} {format_time(runner.elapsed())}")
+            scen_tab_pill.set_visibility(True)
+            foot_scen.set_text(f"{icon} Scenario: {runner.scenario.name} {clock}")
+            scen_banner_text.set_text(
+                f"Scenario “{runner.scenario.name}” is {runner.state.value} ({clock}). "
+                "It changes these values; what you set here may be overwritten by its next step."
+            )
+        else:
+            scen_tab_pill.set_visibility(False)
+        foot_scen.set_visibility(runner.active)
+        scen_banner.set_visibility(runner.active)
         if st.running and session.faults.silent:
             # Silent is on purpose: say so instead of a bus-health state (nothing is sent).
             top_pill.classes(remove="stopped running error", add="warn")
@@ -716,6 +755,7 @@ def _build_page(state: GuiState) -> None:
     tab_diag.on_click(lambda: switch_tab("diagnostics"))
     tab_traffic.on_click(lambda: switch_tab("traffic"))
     tab_faults.on_click(lambda: switch_tab("faults"))
+    tab_scen.on_click(lambda: switch_tab("scenarios"))
 
     ui.timer(0.2, update_chrome)
 

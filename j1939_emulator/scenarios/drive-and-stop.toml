@@ -1,0 +1,44 @@
+# Basic trip: idle, pull away, highway, slow down, stop, engine off.
+# Checks: the ELD goes to Driving on its own once the truck moves (FMCSA: at 5 mph),
+# and after a few minutes standing still with the engine on it asks the driver to
+# change the duty status. Odometer and engine hours count up during the trip.
+
+name = "Drive and stop"
+description = "Idle → 5 → 35 → 65 mph → slow down → stop 6 min with the engine on → engine off. About 12 minutes."
+
+[[step]]
+at = "0s"
+ignition = "run"
+note = "Engine started, truck standing at idle"
+
+[[step]]
+at = "30s"
+ramp = { speed_mph = 6, rpm = 1100, over = "8s" }
+note = "Pulling away: the ELD should switch to Driving"
+
+[[step]]
+at = "45s"
+ramp = { speed_mph = 35, rpm = 1450, over = "25s" }
+
+[[step]]
+at = "1m30s"
+ramp = { speed_mph = 65, rpm = 1550, over = "45s" }
+note = "Highway"
+
+[[step]]
+at = "4m"
+ramp = { speed_mph = 35, rpm = 1300, over = "30s" }
+
+[[step]]
+at = "5m"
+ramp = { speed_mph = 0, rpm = 650, over = "30s" }
+note = "Stopping; engine keeps running"
+
+[[step]]
+at = "5m30s"
+note = "Standing still at idle: in about 5 minutes the ELD should ask the driver about the duty status"
+
+[[step]]
+at = "11m45s"
+ignition = "on"
+note = "Engine off (key ON)"

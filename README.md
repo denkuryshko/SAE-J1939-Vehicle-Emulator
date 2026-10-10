@@ -257,6 +257,63 @@ Requests faults apply to **All PGNs** or one PGN (VIN, VD, HOURS, EEC1, CCVS, DM
 
 While any fault is on, the Faults tab pill and the footer show how many; **ECU silent** also turns the top status amber (**ECU SILENT · FAULT INJECTED**) so it is not mistaken for a wiring problem. **Clear All Faults** puts everything back to normal.
 
+### Scenarios
+
+The **Scenarios** tab plays a timed test by itself: the truck drives with smooth, realistic acceleration and braking, faults come and go, the VIN changes. Pick a scenario, press **START** for the ECU, then **Run**. **Pause** freezes the scenario clock (the truck keeps the current speed), **Stop** ends it. The step list shows what has run, the current step and the time to the next one; the footer and the Signals tab show that a scenario is running, so a manual change is not a surprise when the next step overwrites it.
+
+When a scenario ends (finished, stopped, the ECU stopped, or an error) all faults are cleared; the speed, rpm and meters stay where the scenario left them. Every step is written to the J1939 trace (`SCENARIO step 3 @1:30: …`), so the trace file of the run is the record of the test. Times are real: the ELD runs on its own clock, so a 30-minute test takes 30 minutes.
+
+Built-in scenarios:
+
+| Scenario | What it checks | Length |
+|----------|----------------|--------|
+| `drive-and-stop` | Idle → 5 → 35 → 65 mph → stop with the engine on for 6 min → engine off: automatic Driving, the stop prompt, meters counting | 11:45 |
+| `ecu-disconnect` | ECU silent for 2 min while driving at 45 mph (change to 34 min for the 30-minute engine synchronization rule) | 6:15 |
+| `sensor-failure` | Speed "not available", then "error"; odometer "not available" while driving | 6:15 |
+| `truck-change` | Stop, power off, new VIN / odometer / engine hours, power on, drive; your VIN is restored at the end | 5:40 |
+| `slow-ecu` | VIN requests delayed 3 s, then ignored, then NACKed, then normal; reconnect the ELD at each phase | 8:00 |
+
+Your own scenarios: **Add file** in the tab (saved to `%APPDATA%\j1939-emulator\scenarios\` on Windows, `~/.local/state/j1939-emulator/scenarios/` on Linux/macOS), or put `.toml` files in that folder and press **Refresh**. A file is checked when it is selected and again on Run, so edits are picked up and a mistake is reported with the step and the key (`step 3: unknown key 'sped_mph'`) before anything happens.
+
+Format:
+
+```toml
+name = "ECU disconnect while driving"
+description = "Shown under the name in the tab"
+# clear_faults_on_end = true     (default)
+# restore_vin_on_end = false     (true: put back the VIN the ECU had before the scenario)
+
+[[step]]
+at = "0s"                        # time from the start: 500ms, 20s, 1m30s, 2h
+ignition = "run"                 # "run" = engine running (idle), "on" = key ON, engine off
+
+[[step]]
+at = "20s"
+ramp = { speed_mph = 45, rpm = 1450, over = "30s" }   # smooth by default; curve = "linear" for constant rate
+note = "Text for the trace and the step list"
+
+[[step]]
+at = "2m"
+fault = { silent = true }
+```
+
+Step actions (several may share one step):
+
+| Key | Example | |
+|-----|---------|-|
+| `ignition` | `"run"` / `"on"` | Engine running at idle / key ON, engine off |
+| `rpm`, `speed_mph` | `rpm = 1200`, `speed_mph = 35` | Set at once |
+| `ramp` | `{ speed_mph = 0, rpm = 650, over = "30s" }` | Change gradually from the current value |
+| `odometer_mi`, `engine_hours` | `odometer_mi = 512340.7` | Set a meter |
+| `odometer_add_mi`, `engine_hours_add` | `odometer_add_mi = -10` | Jump a meter (negative = backwards) |
+| `vin` | `vin = "3AKJHHDR1LSLA4213"` | New VIN, broadcast at once |
+| `dtc` | `{ spn110_fmi3 = true, spn190_fmi0 = false }` | DM1 faults |
+| `fault` | `{ silent = true }`, `{ ccvs = false }`, `{ spn84 = "not_available" }`, `{ requests = { mode = "delay", pgn = "vin", delay = "3s" } }`, `{ freeze_odometer = true }` | Everything on the Faults tab: `silent`; `eec1` / `ccvs` / `vd` / `hours` broadcast on/off; `spn190` / `spn84` / `spn245` / `spn247` = `"normal"` / `"not_available"` / `"error"`; `requests` with `mode` = normal / ignore / nack / delay, `pgn` = number, `"vin"` or `"all"`, `delay`; `freeze_odometer`, `freeze_hours` |
+| `clear_faults` | `true` | All faults back to normal |
+| `note` | `"…"` | A line in the trace and the step list |
+
+The CLI plays scenarios too: `scenario list`, `scenario run drive-and-stop`, `scenario` (status), `scenario pause | resume | stop`, or start with `--scenario drive-and-stop`.
+
 ### Bus modes
 
 | Mode | Channels | Hardware |

@@ -1,0 +1,48 @@
+# Broken sensors while driving: the ECU keeps talking, but some values are
+# "not available" (0xFF…) or "error" (0xFE…).
+# Checks: the ELD does not show garbage (0 mph, a jump in miles), and handles the
+# missing speed and odometer the way its spec says.
+
+name = "Sensor failure while driving"
+description = "Speed not available, then error, then odometer not available, then all normal. About 6.5 minutes."
+
+[[step]]
+at = "0s"
+ignition = "run"
+
+[[step]]
+at = "20s"
+ramp = { speed_mph = 35, rpm = 1400, over = "25s" }
+
+[[step]]
+at = "1m30s"
+fault = { spn84 = "not_available" }
+note = "Speed sensor missing"
+
+[[step]]
+at = "2m30s"
+fault = { spn84 = "error" }
+note = "Speed sensor broken"
+
+[[step]]
+at = "3m30s"
+fault = { spn84 = "normal" }
+note = "Speed back"
+
+[[step]]
+at = "4m"
+fault = { spn245 = "not_available" }
+note = "Odometer missing while driving"
+
+[[step]]
+at = "5m"
+fault = { spn245 = "normal" }
+note = "Odometer back: it has kept counting meanwhile"
+
+[[step]]
+at = "5m30s"
+ramp = { speed_mph = 0, rpm = 650, over = "30s" }
+
+[[step]]
+at = "6m15s"
+ignition = "on"

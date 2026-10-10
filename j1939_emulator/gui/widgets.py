@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from nicegui import ui
@@ -17,6 +18,15 @@ from j1939_emulator.bus.trace import (
     trace_dir,
 )
 from j1939_emulator.ecu_identity import generate_vin, vin_check_digit_warning
+from j1939_emulator.scenario import (
+    RunState,
+    ScenarioError,
+    ScenarioRunner,
+    format_time,
+    list_scenarios,
+    load_scenario,
+    user_dir,
+)
 from j1939_emulator.faults import (
     BROADCAST_PGNS,
     MAX_REQUEST_DELAY_MS,
@@ -414,16 +424,33 @@ def build_eec1(session, payload_labels: dict) -> None:
             "SPN 190", "Engine Speed", "rpm", sig.spn190_rpm, 0, 3500, 25,
             sig.set_engine_speed,  # 0 rpm / >= 600 rpm also flip the ignition switch
             presets=[("0 rpm", 0), ("Idle 650", 650), ("Cruise 1250", 1250), ("Rated 2100", 2100)],
+            decimals=0,
         )
-        shown = [sig.spn190_rpm]
+        follow_value(sig, "spn190_rpm", sync_rpm, payload_labels["eec1"], encode_eec1)
 
-        def follow_rpm() -> None:
-            # The ignition switch (or another tab) changes rpm outside this slider.
-            if sig.spn190_rpm != shown[0]:
-                shown[0] = sig.spn190_rpm
-                sync_rpm(sig.spn190_rpm)
 
-        ui.timer(0.3, follow_rpm)
+def follow_value(
+    sig: SignalState,
+    attr: str,
+    sync: Callable[[float], None],
+    payload_label: Any,
+    encode: Callable[[SignalState], bytes],
+) -> None:
+    """Mirror a value changed outside this control (ignition switch, another tab, a scenario
+    ramp), and the payload with it; scenarios change values without notify()."""
+    shown = [getattr(sig, attr), b""]
+
+    def follow() -> None:
+        value = getattr(sig, attr)
+        if value != shown[0]:
+            shown[0] = value
+            sync(value)
+        payload = encode(sig)
+        if payload != shown[1]:
+            shown[1] = payload
+            payload_label.set_text(payload_hex(payload))
+
+    ui.timer(0.3, follow)
 
 
 def build_ccvs(session, payload_labels: dict) -> None:
@@ -446,12 +473,13 @@ def build_ccvs(session, payload_labels: dict) -> None:
                 sig, "ENGINE OFF · 0 mph",
                 "Engine off: sending 0 mph. This setting is used once the engine runs.",
             )
-        slider_spn(
+        sync_speed = slider_spn(
             "SPN 84", "Wheel-Based Vehicle Speed", "mph", sig.spn84_speed_mph, 0, 120, 0.5,
             _bind(sig, "spn84_speed_mph"),
             presets=[("0 mph", 0), ("5 mph", 5), ("35 mph", 35), ("65 mph", 65)],
             decimals=1,
         )
+        follow_value(sig, "spn84_speed_mph", sync_speed, payload_labels["ccvs"], encode_ccvs)
 
 
 def build_vd(session, payload_labels: dict) -> None:
@@ -618,6 +646,16 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                     btn_set_vin.on_click(lambda: on_vin_change())
                     btn_copy.on_click(on_copy)
                     btn_generate.on_click(on_generate)
+
+                    shown_vin = [identity.vin]
+
+                    def follow_vin() -> None:
+                        # A scenario (truck change) or the CLI set another VIN.
+                        if identity.vin != shown_vin[0]:
+                            shown_vin[0] = identity.vin
+                            vin_input.value = identity.vin
+
+                    ui.timer(0.5, follow_vin)
 
             with ui.column().classes("gap-3 items-stretch min-w-0"):
                 with ui.element("div").style(
@@ -1459,3 +1497,242 @@ def build_faults_pane(session, refs: dict[str, Any]) -> None:
     refs["refresh_faults"] = refresh
     refresh()
     ui.timer(0.5, refresh)
+
+
+# --- Scenarios tab ---
+
+_RUN_STATE_TEXT = {
+    RunState.IDLE: ("READY", "idle"),
+    RunState.RUNNING: ("RUNNING", "running"),
+    RunState.PAUSED: ("PAUSED", "paused"),
+    RunState.FINISHED: ("FINISHED", "finished"),
+    RunState.STOPPED: ("STOPPED", "stopped"),
+    RunState.FAILED: ("FAILED", "failed"),
+}
+
+
+def build_scenarios_pane(session, runner: ScenarioRunner, refs: dict[str, Any]) -> None:
+    """Scenarios tab: pick a scenario file, see its steps, Run / Pause / Stop it.
+
+    The runner plays in its own thread; this view only reads its state (4 times a second).
+    The file is read again on Run, so edits made in an editor are picked up.
+    """
+    sig = session.signals
+    view: dict[str, Any] = {"scenario": None, "rows": [], "painted": None}
+
+    with ui.element("div").classes("card").style("display:flex;flex-direction:column;gap:12px;"):
+        with ui.row().classes("w-full items-center justify-between").style(
+            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
+        ):
+            with ui.column().classes("gap-0"):
+                ui.label("Scenarios").style("font-size:14px;font-weight:700;text-transform:uppercase;")
+                ui.label(
+                    "Timed test sequences the emulator plays by itself: driving with smooth "
+                    "acceleration, faults, VIN changes. Real time; every step is written to the "
+                    "J1939 trace."
+                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+
+        with ui.row().classes("w-full items-end gap-3 flex-wrap"):
+            with ui.column().classes("gap-0").style("flex:1 1 320px;min-width:0;"):
+                ui.label("Scenario").classes("field-label")
+                sel = ui.select(options={}, value=None).props(
+                    "dense outlined options-dense"
+                ).classes("w-full")
+            btn_reload = ui.button("Refresh").props("flat dense")
+            btn_add = ui.button("Add file", icon="upload_file").props("flat dense")
+            # The uploader itself stays hidden; "Add file" opens its file picker.
+            upload = ui.upload(auto_upload=True, max_files=1).props("accept=.toml").classes(
+                "scenario-upload"
+            )
+            btn_add.on_click(lambda: upload.run_method("pickFiles"))
+        ui.label(f"Your own scenarios go in: {user_dir()}").classes("font-mono").style(
+            "font-size:10px;color:#94A3B8;word-break:break-all;margin-top:-6px;"
+        )
+
+        info = ui.element("div").classes("scenario-info")
+        with info:
+            info_title = ui.label().classes("scenario-title")
+            info_desc = ui.label().classes("scenario-desc")
+            info_meta = ui.label().classes("scenario-meta font-mono")
+        error_box = ui.label().classes("scenario-error font-mono")
+        error_box.set_visibility(False)
+
+        with ui.element("div").classes("scenario-controls"):
+            btn_run = ui.button("Run", icon="play_arrow").classes(
+                "action-btn btn-start font-mono"
+            ).props("unelevated dense")
+            btn_pause = ui.button("Pause", icon="pause").classes(
+                "action-btn btn-restart font-mono"
+            ).props("unelevated dense")
+            btn_stop = ui.button("Stop", icon="stop").classes(
+                "action-btn btn-restart font-mono"
+            ).props("unelevated dense")
+            state_pill = ui.label("READY").classes("scenario-state idle font-mono")
+            clock = ui.label("0:00 / 0:00").classes("scenario-clock font-mono")
+            live = ui.label().classes("scenario-live font-mono")
+        progress = ui.linear_progress(value=0, show_value=False, size="6px").props(
+            "color=primary track-color=grey-3 instant-feedback"
+        )
+        steps_box = ui.element("div").classes("scenario-steps font-mono")
+
+    def options() -> dict[str, str]:
+        return {str(path): label for label, path in list_scenarios()}
+
+    def show(path: str | None) -> None:
+        """Load the file for preview; on error show where it is wrong."""
+        steps_box.clear()
+        view["rows"], view["painted"], view["scenario"] = [], None, None
+        if not path:
+            info.set_visibility(False)
+            error_box.set_visibility(False)
+            return
+        try:
+            scenario = load_scenario(path)
+        except ScenarioError as exc:
+            info.set_visibility(False)
+            error_box.set_text(f"Cannot use this file: {exc}")
+            error_box.set_visibility(True)
+            return
+        error_box.set_visibility(False)
+        info.set_visibility(True)
+        view["scenario"] = scenario
+        info_title.set_text(scenario.name)
+        info_desc.set_text(scenario.description)
+        info_desc.set_visibility(bool(scenario.description))
+        info_meta.set_text(
+            f"{len(scenario.steps)} steps · {format_time(scenario.duration)}"
+            + (" · faults cleared at the end" if scenario.clear_faults_on_end else "")
+            + (" · VIN restored at the end" if scenario.restore_vin_on_end else "")
+        )
+        with steps_box:
+            for step in scenario.steps:
+                row = ui.element("div").classes("scenario-step")
+                with row:
+                    ui.label(format_time(step.at)).classes("scenario-at")
+                    with ui.element("div").classes("scenario-what"):
+                        for line in step.describe():
+                            ui.label(line).classes(
+                                "scenario-note" if line.startswith("“") else ""
+                            )
+                    eta = ui.label().classes("scenario-eta")
+                view["rows"].append((row, eta))
+
+    def reload_list() -> None:
+        opts = options()
+        sel.options = opts
+        if sel.value not in opts:
+            sel.value = next(iter(opts), None)
+        sel.update()
+        show(sel.value)
+
+    async def on_upload(e) -> None:
+        f = getattr(e, "file", None)
+        if f is not None:  # NiceGUI 3
+            name, data = f.name, await f.read()
+        else:  # NiceGUI 2
+            name, data = e.name, e.content.read()
+        upload.reset()
+        name = Path(name or "scenario.toml").name
+        if not name.lower().endswith(".toml"):
+            ui.notify("Only .toml scenario files", type="warning")
+            return
+        target = user_dir() / name
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        except OSError as exc:
+            ui.notify(f"Could not save {name}: {exc}", type="negative")
+            return
+        reload_list()
+        sel.value = str(target)
+        try:
+            load_scenario(target)
+            ui.notify(f"Added {name}", type="positive")
+        except ScenarioError as exc:
+            ui.notify(f"Saved, but the file has an error: {exc}", type="warning", timeout=10000)
+
+    def on_run() -> None:
+        if not sel.value:
+            return
+        if not session.running:
+            ui.notify("Press START first: the ECU is not running", type="warning")
+            return
+        try:
+            scenario = load_scenario(sel.value)  # read again: picks up edits
+        except ScenarioError as exc:
+            show(sel.value)
+            ui.notify(str(exc), type="negative", timeout=10000)
+            return
+        show(sel.value)
+        try:
+            runner.start(scenario)
+        except RuntimeError as exc:
+            ui.notify(str(exc), type="warning")
+            return
+        ui.notify(f"Scenario started: {scenario.name}", type="positive")
+
+    def on_pause() -> None:
+        if runner.state is RunState.RUNNING:
+            runner.pause()
+        elif runner.state is RunState.PAUSED:
+            runner.resume()
+
+    def on_stop() -> None:
+        runner.stop()
+        ui.notify("Scenario stopped", type="info")
+
+    def refresh() -> None:
+        st = runner.state
+        playing = runner.scenario is not None and view["scenario"] is not None and (
+            runner.scenario.path == view["scenario"].path
+        )
+        text, cls = _RUN_STATE_TEXT[st]
+        if st is RunState.FAILED and runner.error:
+            text = f"FAILED: {runner.error}"
+        state_pill.set_text(text)
+        state_pill.classes(remove="idle running paused finished stopped failed", add=cls)
+        sel.set_enabled(not runner.active)
+        btn_reload.set_enabled(not runner.active)
+        btn_add.set_enabled(not runner.active)
+        btn_run.set_enabled(not runner.active and view["scenario"] is not None)
+        btn_pause.set_enabled(runner.active)
+        btn_stop.set_enabled(runner.active)
+        btn_pause.set_text("Resume" if st is RunState.PAUSED else "Pause")
+        btn_pause.props(f"icon={'play_arrow' if st is RunState.PAUSED else 'pause'}")
+        live.set_text(
+            f"{sig.broadcast_speed_mph:.1f} mph · {sig.broadcast_rpm:.0f} rpm · "
+            f"{sig.spn245_total_mi:.1f} mi · {sig.spn247_engine_hours:.2f} h"
+        )
+        scenario = runner.scenario if playing else view["scenario"]
+        total = scenario.duration if scenario else 0.0
+        t = runner.elapsed() if playing else 0.0
+        clock.set_text(f"{format_time(t)} / {format_time(total)}")
+        progress.set_value(min(1.0, t / total) if total else 0.0)
+        done = runner.done if playing else 0
+        rows = view["rows"]
+        painted = (done, st, playing)
+        if painted != view["painted"]:
+            view["painted"] = painted
+            for i, (row, _eta) in enumerate(rows):
+                row.classes(remove="done current next")
+                if i < done - 1 or (i == done - 1 and not runner.active):
+                    row.classes(add="done")
+                elif i == done - 1:
+                    row.classes(add="current")
+                elif i == done and runner.active:
+                    row.classes(add="next")
+        for i, (_row, eta) in enumerate(rows):
+            if playing and runner.active and i == done and scenario:
+                eta.set_text(f"in {format_time(scenario.steps[i].at - t)}")
+            elif eta.text:
+                eta.set_text("")
+
+    sel.on_value_change(lambda e: show(e.value))
+    btn_reload.on_click(reload_list)
+    upload.on_upload(on_upload)
+    btn_run.on_click(on_run)
+    btn_pause.on_click(on_pause)
+    btn_stop.on_click(on_stop)
+    reload_list()
+    refresh()
+    ui.timer(0.25, refresh)

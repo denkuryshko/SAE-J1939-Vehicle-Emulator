@@ -1,0 +1,58 @@
+# Truck change through a power cycle: drive, stop, key OFF (the ECU drops off the bus),
+# then key ON in "another truck" with a new VIN, odometer and engine hours, and drive.
+# Checks: the ELD picks up the new VIN and meters and ties the new trip to the new truck.
+# The VIN you had before the scenario is restored when it ends.
+
+name = "Truck change (power cycle, new VIN)"
+description = "Drive, stop, power off, new VIN / odometer / engine hours, power on, drive. About 6 minutes."
+restore_vin_on_end = true
+
+[[step]]
+at = "0s"
+ignition = "run"
+
+[[step]]
+at = "15s"
+ramp = { speed_mph = 30, rpm = 1400, over = "20s" }
+
+[[step]]
+at = "1m30s"
+ramp = { speed_mph = 0, rpm = 650, over = "20s" }
+
+[[step]]
+at = "2m15s"
+ignition = "on"
+note = "Engine off"
+
+[[step]]
+at = "2m30s"
+fault = { silent = true }
+note = "Key OFF: the ECU powers down"
+
+[[step]]
+at = "3m"
+vin = "3AKJHHDR1LSLA4213"
+odometer_mi = 512340.7
+engine_hours = 21877.4
+note = "Another truck"
+
+[[step]]
+at = "3m"
+fault = { silent = false }
+note = "Key ON in the other truck"
+
+[[step]]
+at = "3m10s"
+ignition = "run"
+
+[[step]]
+at = "3m40s"
+ramp = { speed_mph = 25, rpm = 1350, over = "15s" }
+
+[[step]]
+at = "5m"
+ramp = { speed_mph = 0, rpm = 650, over = "20s" }
+
+[[step]]
+at = "5m40s"
+ignition = "on"
