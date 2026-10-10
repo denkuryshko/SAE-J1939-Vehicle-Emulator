@@ -7,7 +7,7 @@ from pathlib import Path
 import tomllib
 
 from j1939_emulator.bus.detect import EmulationMode
-from j1939_emulator.diagnostics import DiagnosticState
+from j1939_emulator.diagnostics import DiagnosticState, Dtc, default_dtcs, dtc_key, parse_dtc_key
 from j1939_emulator.ecu_identity import (
     DEFAULT_SOURCE_ADDRESS,
     NAME_FIELDS,
@@ -138,22 +138,53 @@ def _int(value: object) -> int:
     return int(value, 0) if isinstance(value, str) else int(value)
 
 
+# Older switches for the two built-in DTCs: [diagnostics] dtc_spn110_fmi3 = true, ...
+_LEGACY_DTC_FLAGS = {
+    "inject_coolant_voltage_high": dtc_key(110, 3),
+    "inject_crankshaft_overspeed": dtc_key(190, 0),
+}
+_DTC_FIELDS = {"spn", "fmi", "lamp", "name", "description", "oc", "active"}
+
+
 def _load_diagnostics(raw: dict) -> DiagnosticState:
+    """[[diagnostics.dtc]] tables replace the two built-in DTCs; the old flags still work."""
     diag = raw.get("diagnostics", {}) or {}
-    return DiagnosticState(
-        dtc_spn110_fmi3=bool(
-            diag.get(
-                "dtc_spn110_fmi3",
-                diag.get("inject_coolant_voltage_high", False),
-            )
-        ),
-        dtc_spn190_fmi0=bool(
-            diag.get(
-                "dtc_spn190_fmi0",
-                diag.get("inject_crankshaft_overspeed", False),
-            )
-        ),
-    )
+    tables = diag.get("dtc")
+    if tables is None:
+        dtcs = default_dtcs()
+    else:
+        if not isinstance(tables, list):
+            raise ValueError("diagnostics.dtc must be a list of tables: [[diagnostics.dtc]]")
+        dtcs = []
+        for i, t in enumerate(tables, 1):
+            unknown = set(t) - _DTC_FIELDS
+            if unknown:
+                raise ValueError(f"diagnostics.dtc #{i}: unknown key(s) {', '.join(sorted(unknown))}")
+            if "spn" not in t or "fmi" not in t:
+                raise ValueError(f"diagnostics.dtc #{i}: spn and fmi are required")
+            try:
+                dtcs.append(Dtc(
+                    spn=_int(t["spn"]), fmi=_int(t["fmi"]), lamp=str(t.get("lamp", "amber")).lower(),
+                    name=str(t.get("name", "")), description=str(t.get("description", "")),
+                    oc=_int(t.get("oc", 1)), active=bool(t.get("active", False)),
+                ))
+            except ValueError as exc:
+                raise ValueError(f"diagnostics.dtc #{i}: {exc}") from None
+    state = DiagnosticState(dtcs=dtcs)
+
+    flags = {k: v for k, v in diag.items() if k != "dtc"}
+    for name, value in flags.items():
+        key = _LEGACY_DTC_FLAGS.get(name)
+        if key is None and name.startswith("dtc_"):
+            parse_dtc_key(name[4:])  # ValueError for a malformed flag name
+            key = name[4:]
+        if key is None:
+            continue  # unknown keys were always ignored here
+        try:
+            state.get(key).active = bool(value)
+        except KeyError:
+            raise ValueError(f"diagnostics.{name}: {key} is not in the DTC list") from None
+    return state
 
 
 def _apply_pgn(signals: SignalState, section: dict | None, name: str) -> None:

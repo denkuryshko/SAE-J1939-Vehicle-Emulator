@@ -154,9 +154,15 @@ ignition [on|run]        — show or set ignition: on = key ON, engine off; run 
 get <key>                — read SPN (e.g. get eec1.spn190_rpm)
 set <key> <value>        — change SPN (e.g. set eec1.spn190_rpm 2100)
 vin [value]              — show or set 17-char VIN
-dtc 1|2|both on|off      — inject/clear DM1 faults
+dtc [list]               — configured DTCs and which are active
+dtc <n|spnX_fmiY|all> on|off — inject/clear DM1 faults (n = number in dtc list)
 scenario                 — scenario status; scenario list | run <name|file> | pause | resume | stop
 stop | start | reset | help | quit"""
+
+
+def _dtc_states(diagnostics) -> str:
+    """Active DTCs for status lines, e.g. "spn110_fmi3" or "none"."""
+    return ",".join(d.key for d in diagnostics.active) or "none"
 
 
 def _ignition_name(signals) -> str:
@@ -486,8 +492,7 @@ def run_cli(args: argparse.Namespace) -> int:
                     f"claimed={st.address_claimed}\n"
                     f"sa=0x{st.sa:02X}\n"
                     f"vin={session.identity.vin}\n"
-                    f"dtc1={session.diagnostics.dtc_spn110_fmi3}\n"
-                    f"dtc2={session.diagnostics.dtc_spn190_fmi0}\n"
+                    f"dtcs={_dtc_states(session.diagnostics)}\n"
                     f"tx={st.tx_count}\n"
                     f"load_pct={st.load_pct:.1f}\n"
                     f"bus={st.bus_health.value}\n"
@@ -576,11 +581,10 @@ def run_cli(args: argparse.Namespace) -> int:
                 continue
             if cmd == "dtc":
                 if len(rest) < 2:
-                    print(
-                        "usage: dtc <1|2|both> <on|off>\n"
-                        f"active: dtc1={session.diagnostics.dtc_spn110_fmi3} "
-                        f"dtc2={session.diagnostics.dtc_spn190_fmi0}"
-                    )
+                    for i, d in enumerate(session.diagnostics.dtcs, 1):
+                        state_txt = f"ACTIVE (OC {d.oc})" if d.active else "inactive"
+                        print(f"{i:>2}. {d.key:<16} {d.lamp:<8} {state_txt:<16} {d.name}")
+                    print("usage: dtc <n|spnX_fmiY|all> <on|off>")
                     continue
                 which, state_s = rest[0].lower(), rest[1].lower()
                 active = state_s in ("on", "1", "true", "inject")
@@ -589,22 +593,21 @@ def run_cli(args: argparse.Namespace) -> int:
                 elif state_s not in ("on", "1", "true", "inject"):
                     print("error: state must be on|off")
                     continue
-                if which in ("1", "dtc1", "110"):
-                    session.set_dtc1(active)
-                elif which in ("2", "dtc2", "190"):
-                    session.set_dtc2(active)
-                elif which == "both":
+                dtcs = session.diagnostics.dtcs
+                if which in ("all", "both"):
                     if active:
-                        session.inject_both_dtcs()
+                        session.inject_all_dtcs()
                     else:
                         session.clear_all_dtcs()
                 else:
-                    print("error: which must be 1|2|both")
-                    continue
-                print(
-                    f"ok dtc1={session.diagnostics.dtc_spn110_fmi3} "
-                    f"dtc2={session.diagnostics.dtc_spn190_fmi0}"
-                )
+                    if which.isdigit() and 1 <= int(which) <= len(dtcs):
+                        which = dtcs[int(which) - 1].key
+                    try:
+                        session.set_dtc(which, active)
+                    except KeyError:
+                        print(f"error: no DTC {which!r}; see dtc list")
+                        continue
+                print(f"ok dtcs={_dtc_states(session.diagnostics)}")
                 continue
             if cmd == "stop":
                 session.stop()

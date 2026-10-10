@@ -30,6 +30,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from j1939_emulator.diagnostics import parse_dtc_key
 from j1939_emulator.ecu_identity import validate_vin
 from j1939_emulator.faults import (
     BROADCAST_PGNS,
@@ -59,7 +60,6 @@ _STEP_KEYS = {
     "engine_hours", "engine_hours_add", "vin", "dtc", "fault", "clear_faults", "note",
 }
 _RAMP_KEYS = {"speed_mph", "rpm", "over", "curve"}
-_DTC_KEYS = {"spn110_fmi3": "SPN 110 / FMI 3", "spn190_fmi0": "SPN 190 / FMI 0"}
 _FAULT_KEYS = (
     {"silent", "requests", "freeze_odometer", "freeze_hours"}
     | set(BROADCAST_PGNS) | set(OVERRIDABLE_SPNS)
@@ -182,7 +182,8 @@ class Step:
         if self.vin is not None:
             out.append(f"VIN → {self.vin}")
         for key, on in self.dtc.items():
-            out.append(f"DTC {_DTC_KEYS[key]} {'active' if on else 'cleared'}")
+            spn, fmi = parse_dtc_key(key)
+            out.append(f"DTC SPN {spn} / FMI {fmi} {'active' if on else 'cleared'}")
         f = self.fault
         if "silent" in f:
             out.append(f"Fault: ECU silent {'ON' if f['silent'] else 'OFF'}")
@@ -334,8 +335,15 @@ def _parse_step(where: str, raw: Any) -> Step:
         except ValueError as exc:
             raise ScenarioError(f"{where}: vin: {exc}") from None
     if "dtc" in raw:
-        d = _table(where, "dtc", raw["dtc"], set(_DTC_KEYS))
-        step.dtc = {k: _flag(where, f"dtc.{k}", v) for k, v in d.items()}
+        d = raw["dtc"]
+        if not isinstance(d, dict):
+            raise ScenarioError(f"{where}: dtc must be a table, e.g. dtc = {{ spn110_fmi3 = true }}")
+        for k in d:
+            try:
+                parse_dtc_key(k)
+            except ValueError as exc:
+                raise ScenarioError(f"{where}: dtc: {exc}") from None
+        step.dtc = {k.lower(): _flag(where, f"dtc.{k}", v) for k, v in d.items()}
     if "fault" in raw:
         f = _table(where, "fault", raw["fault"], _FAULT_KEYS)
         parsed: dict[str, Any] = {}
@@ -612,9 +620,10 @@ class ScenarioRunner:
         if step.vin is not None:
             session.set_vin(step.vin)
         if step.dtc:
-            session.set_dtcs(
-                dtc1=step.dtc.get("spn110_fmi3"), dtc2=step.dtc.get("spn190_fmi0")
-            )
+            try:
+                session.set_dtcs(step.dtc)
+            except KeyError as exc:
+                session.note(f"SCENARIO step skipped DTCs: {exc.args[0]}")
         f = step.fault
         if "silent" in f:
             session.set_silent(f["silent"])

@@ -105,6 +105,7 @@ def test_steps_sorted_and_described():
     ({"step": [{"at": 0, "fault": {"requests": {"mode": "drop"}}}]}, "fault.requests.mode must be"),
     ({"step": [{"at": 0, "vin": "TOO-SHORT!!"}]}, "step 1: vin"),
     ({"step": [{"at": 0}]}, "the step does nothing"),
+    ({"step": [{"at": 0, "dtc": {"spn110": True}}]}, "step 1: dtc: DTC key 'spn110'"),
 ])
 def test_invalid_scenarios_say_where(raw, message):
     with pytest.raises(ScenarioError) as err:
@@ -175,7 +176,7 @@ def test_steps_apply_faults_and_clear_them_at_the_end(bench):
     assert runner.state is RunState.FINISHED
     assert active_faults(session.signals, session.faults) == []  # clear_faults_on_end
     assert session.signals.spn245_total_mi == pytest.approx(odo + 100)
-    assert session.diagnostics.dtc_spn110_fmi3
+    assert session.diagnostics.get("spn110_fmi3").active
     text = "\n".join(session.trace.recent()[1])
     assert "SCENARIO 'Scenario' started: 3 steps" in text
     assert "SCENARIO step 2 @0:00.3: Odometer +100 mi; DTC SPN 110 / FMI 3 active" in text

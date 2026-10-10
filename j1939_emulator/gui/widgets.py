@@ -17,6 +17,7 @@ from j1939_emulator.bus.trace import (
     split_id,
     trace_dir,
 )
+from j1939_emulator.diagnostics import LAMP_LABELS
 from j1939_emulator.ecu_identity import generate_vin, vin_check_digit_warning
 from j1939_emulator.scenario import (
     RunState,
@@ -1168,8 +1169,19 @@ def build_trace_view(session, monitor: dict[str, bool]) -> None:
     ui.timer(0.5, refresh)
 
 
+_LAMP_BADGE_STYLE = {
+    "red": "background:#FEF2F2;color:#991B1B;border-color:#FCA5A5;",
+    "amber": "background:#FFFBEB;color:#B45309;border-color:#FDE68A;",
+}
+
+
+def _lamp_tone(lamp: str) -> str:
+    """Card colour: red stop is red, every other lamp amber."""
+    return "red" if lamp == "red" else "amber"
+
+
 def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
-    """Diagnostics tab — 2 DTCs on DM1."""
+    """Diagnostics tab — the configured DTCs on DM1; DM11 from the ELD clears them."""
     diag = session.diagnostics
 
     with ui.element("div").classes("card").style(
@@ -1189,7 +1201,7 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
                 btn_clear = ui.button("Clear All").classes(
                     "action-btn btn-restart font-mono"
                 ).props("unelevated dense")
-                btn_inject = ui.button("Inject Both").classes(
+                btn_inject = ui.button("Inject All").classes(
                     "action-btn btn-restart font-mono"
                 ).props("unelevated dense")
 
@@ -1207,70 +1219,52 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
             )
         refs["dm1_alert"] = dm1_alert
 
+        cards: list[tuple[Any, Any, Any, Any, Any]] = []
         with ui.element("div").classes("dtc-grid"):
-            card1 = ui.element("div").classes("dtc-card")
-            with card1:
-                with ui.row().classes("w-full items-center justify-between").style(
-                    "margin-bottom:8px;"
-                ):
-                    ui.label("SPN 110 / FMI 3").classes("badge-subtle font-mono").style(
-                        "background:#FFFBEB;color:#B45309;border-color:#FDE68A;"
+            for dtc in diag.dtcs:
+                tone = _lamp_tone(dtc.lamp)
+                card = ui.element("div").classes("dtc-card")
+                with card:
+                    with ui.row().classes("w-full items-center justify-between").style(
+                        "margin-bottom:8px;"
+                    ):
+                        ui.label(dtc.label).classes("badge-subtle font-mono").style(
+                            _LAMP_BADGE_STYLE[tone]
+                        )
+                        badge = ui.label("INACTIVE").classes("tab-pill font-mono")
+                    ui.label(dtc.name or dtc.label).style(
+                        "font-weight:700;font-size:13px;color:#1F2A37;"
                     )
-                    badge1 = ui.label("INACTIVE").classes("tab-pill font-mono")
-                ui.label("Engine Coolant Temp Voltage High").style(
-                    "font-weight:700;font-size:13px;color:#1F2A37;"
-                )
-                ui.label(
-                    "Voltage Above Normal, Or Shorted To High Source. Amber Warning Lamp."
-                ).style("font-size:11px;color:#5B6775;margin-top:4px;")
-                with ui.row().classes("w-full items-center justify-between").style(
-                    "border-top:1px solid #CBD5E1;padding-top:8px;"
-                ):
-                    ui.label("Lamp: Amber Warning").classes("font-mono").style(
-                        "font-size:11px;color:#5B6775;"
-                    )
-                    btn1 = ui.button("Inject Fault").classes(
-                        "action-btn btn-restart font-mono"
-                    ).props("unelevated dense")
+                    if dtc.description:
+                        ui.label(dtc.description).style(
+                            "font-size:11px;color:#5B6775;margin-top:4px;"
+                        )
+                    with ui.row().classes("w-full items-center justify-between").style(
+                        "border-top:1px solid #CBD5E1;padding-top:8px;"
+                    ):
+                        with ui.column().classes("gap-0"):
+                            ui.label(f"Lamp: {LAMP_LABELS[dtc.lamp]}").classes("font-mono").style(
+                                "font-size:11px;color:#5B6775;"
+                            )
+                            oc_label = ui.label().classes("font-mono").style(
+                                "font-size:11px;color:#5B6775;"
+                            )
+                        btn = ui.button("Inject Fault").classes(
+                            "action-btn btn-restart font-mono"
+                        ).props("unelevated dense")
+                btn.on_click(lambda d=dtc: (session.set_dtc(d.key, not d.active), refresh_dtc_ui()))
+                cards.append((dtc, card, badge, oc_label, btn))
 
-            card2 = ui.element("div").classes("dtc-card")
-            with card2:
-                with ui.row().classes("w-full items-center justify-between").style(
-                    "margin-bottom:8px;"
-                ):
-                    ui.label("SPN 190 / FMI 0").classes("badge-subtle font-mono").style(
-                        "background:#FEF2F2;color:#991B1B;border-color:#FCA5A5;"
-                    )
-                    badge2 = ui.label("INACTIVE").classes("tab-pill font-mono")
-                ui.label("Engine Crankshaft Overspeed").style(
-                    "font-weight:700;font-size:13px;color:#1F2A37;"
-                )
-                ui.label(
-                    "Data Valid But Above Normal Operational Range - Most Severe Level. "
-                    "Red Stop Lamp."
-                ).style("font-size:11px;color:#5B6775;margin-top:4px;")
-                with ui.row().classes("w-full items-center justify-between").style(
-                    "border-top:1px solid #CBD5E1;padding-top:8px;"
-                ):
-                    ui.label("Lamp: Red Stop Lamp").classes("font-mono").style(
-                        "font-size:11px;color:#5B6775;"
-                    )
-                    btn2 = ui.button("Inject Fault").classes(
-                        "action-btn btn-restart font-mono"
-                    ).props("unelevated dense")
+        ui.label(
+            "DM11 (PGN 65235): a Request from the ELD clears all active DTCs here and on DM1; "
+            "a request sent to this ECU gets an ACK. To refuse it, NACK requests for DM11 on "
+            "the Faults tab."
+        ).style("font-size:11px;color:#5B6775;")
 
-        refs.update(
-            {
-                "dtc_card1": card1,
-                "dtc_card2": card2,
-                "dtc_badge1": badge1,
-                "dtc_badge2": badge2,
-                "dtc_btn1": btn1,
-                "dtc_btn2": btn2,
-            }
-        )
+        shown: list[Any] = [None]
 
         def refresh_dtc_ui() -> None:
+            shown[0] = [(d.active, d.oc) for d in diag.dtcs]
             c = diag.active_count
             dm1_alert.style(
                 "display:block;background:#FFFBEB;border:1px solid #FDE68A;"
@@ -1278,22 +1272,16 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
                 if c > 0
                 else "display:none;"
             )
-            if diag.dtc_spn110_fmi3:
-                card1.classes(remove="fault-red", add="fault-amber")
-                badge1.set_text("FAULT INJECTED")
-                btn1.set_text("Clear Fault")
-            else:
-                card1.classes(remove="fault-amber fault-red")
-                badge1.set_text("INACTIVE")
-                btn1.set_text("Inject Fault")
-            if diag.dtc_spn190_fmi0:
-                card2.classes(remove="fault-amber", add="fault-red")
-                badge2.set_text("FAULT INJECTED")
-                btn2.set_text("Clear Fault")
-            else:
-                card2.classes(remove="fault-amber fault-red")
-                badge2.set_text("INACTIVE")
-                btn2.set_text("Inject Fault")
+            for dtc, card, badge, oc_label, btn in cards:
+                if dtc.active:
+                    card.classes(remove="fault-amber fault-red", add=f"fault-{_lamp_tone(dtc.lamp)}")
+                    badge.set_text("FAULT INJECTED")
+                    btn.set_text("Clear Fault")
+                else:
+                    card.classes(remove="fault-amber fault-red")
+                    badge.set_text("INACTIVE")
+                    btn.set_text("Inject Fault")
+                oc_label.set_text(f"Occurrence count: {dtc.oc}")
             pill = refs.get("diag_tab_pill")
             if pill is not None:
                 pill.set_text(f"{c} Active")
@@ -1307,13 +1295,17 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
                     foot.set_text("Active Faults: 0 DTCs")
                     foot.style("color:#1F9D55")
 
+        def follow() -> None:
+            """DM11 from the ELD, scenarios and the CLI change DTCs off the UI thread."""
+            if [(d.active, d.oc) for d in diag.dtcs] != shown[0]:
+                refresh_dtc_ui()
+
         refs["refresh_dtc_ui"] = refresh_dtc_ui
 
-        btn1.on_click(lambda: (session.set_dtc1(not diag.dtc_spn110_fmi3), refresh_dtc_ui()))
-        btn2.on_click(lambda: (session.set_dtc2(not diag.dtc_spn190_fmi0), refresh_dtc_ui()))
         btn_clear.on_click(lambda: (session.clear_all_dtcs(), refresh_dtc_ui()))
-        btn_inject.on_click(lambda: (session.inject_both_dtcs(), refresh_dtc_ui()))
+        btn_inject.on_click(lambda: (session.inject_all_dtcs(), refresh_dtc_ui()))
         refresh_dtc_ui()
+        ui.timer(0.5, follow)
 
 
 # --- Faults tab ---
@@ -1345,6 +1337,7 @@ _REQUEST_TARGET_OPTIONS = {
     61444: "61444 EEC1",
     65265: "65265 CCVS",
     65226: "65226 DM1",
+    65235: "65235 DM11 (clear DTCs)",
 }
 
 

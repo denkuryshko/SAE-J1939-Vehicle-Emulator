@@ -121,9 +121,9 @@ def test_dm1_always_broadcast_and_clears(bench):
     session, eld = bench
     _drain(eld)
     assert _collect(eld, 1.3, 0xFECA)[-1] == bytes([0x00, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF])
-    session.set_dtc1(True)
+    session.set_dtc("spn110_fmi3", True)
     assert _collect(eld, 0.3, 0xFECA)[0][:6] == bytes([0x04, 0xFF, 0x6E, 0x00, 0x03, 0x01])
-    session.set_dtc1(False)
+    session.set_dtc("spn110_fmi3", False)
     assert _collect(eld, 0.3, 0xFECA)[0] == bytes([0x00, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF])
 
 
@@ -166,7 +166,7 @@ def test_stop_saves_meters_when_persisting(bench):
 def test_vin_request_during_dm1_bam_is_answered(bench):
     # Two DTCs make DM1 a 10-byte BAM; can-j1939 sends one BAM at a time, so the VIN reply must wait, not drop.
     session, eld = bench
-    session.inject_both_dtcs()
+    session.inject_all_dtcs()
     for _ in range(3):
         _drain(eld)
         _wait_bam_start(eld, 65226)  # DM1 BAM now holds the transport slot
@@ -236,3 +236,33 @@ def test_key_on_engine_off_still_answers_vin(bench):
     assert rpm_frames and all(f[3:5] == b"\x00\x00" for f in rpm_frames)
     _request(eld, 65260)
     assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"
+
+
+def test_dm11_to_this_ecu_clears_dtcs_and_acks(bench):
+    session, eld = bench
+    session.inject_all_dtcs()
+    _drain(eld)
+    _request(eld, 65235, dest=0x00)
+    assert _collect(eld, 0.4, 0xE8FF) == [bytes([0x00, 0xFF, 0xFF, 0xFF, ELD_SA, 0xD3, 0xFE, 0x00])]
+    assert session.diagnostics.active_count == 0
+    assert session.recent_requests()[-1].result == "cleared 2 active DTCs (DM11), ACK"
+
+
+def test_global_dm11_clears_without_ack(bench):
+    session, eld = bench
+    session.set_dtc("spn190_fmi0", True)
+    _drain(eld)
+    _request(eld, 65235, dest=0xFF)
+    assert _collect(eld, 0.4, 0xE8FF) == []
+    assert session.diagnostics.active_count == 0
+    assert _collect(eld, 1.2, 0xFECA)[-1][2:6] == bytes(4)  # DM1: no DTC
+
+
+def test_dm11_refused_by_request_fault(bench):
+    session, eld = bench
+    session.set_dtc("spn110_fmi3", True)
+    session.set_request_fault("nack", target=65235)
+    _drain(eld)
+    _request(eld, 65235)
+    assert _collect(eld, 0.4, 0xE8FF)[0][0] == 0x01  # NACK
+    assert session.diagnostics.active_count == 1

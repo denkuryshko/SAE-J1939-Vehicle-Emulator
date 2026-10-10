@@ -161,10 +161,13 @@ def test_decode_special_values_and_protocol_frames():
 
 def test_decode_dm1():
     assert decode_payload(65226, encode_dm1(DiagnosticState())) == "DM1: no active DTCs; lamps off"
-    assert decode_payload(65226, encode_dm1(DiagnosticState(True, False))) == (
+    state = DiagnosticState()
+    state.set_active("spn110_fmi3", True)
+    assert decode_payload(65226, encode_dm1(state)) == (
         "DM1: SPN 110 / FMI 3 (OC 1); lamps AWL"
     )
-    assert decode_payload(65226, encode_dm1(DiagnosticState(True, True))) == (
+    state.set_active("spn190_fmi0", True)
+    assert decode_payload(65226, encode_dm1(state)) == (
         "DM1: SPN 110 / FMI 3 (OC 1), SPN 190 / FMI 0 (OC 1); lamps RSL+AWL"
     )
 

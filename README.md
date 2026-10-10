@@ -15,7 +15,7 @@ Built with **python-can**, **can-j1939** and **NiceGUI**.
 | **Signals** | 5 cyclic PGNs with live controls and presets · odometer and engine hours count up automatically while running |
 | **ECU / VIN** | Single node SA `0x00` · J1939-81 address claim (NAME: Industry Group 1 On-Highway, Function 0 Engine) · VIN on PGN 65260, `*`-terminated |
 | **Requests** | Answers Request (PGN 59904), global or to SA `0x00`, for VIN and all broadcast PGNs |
-| **Diagnostics** | 2 injectable DTCs on DM1 (PGN 65226): SPN 110 / FMI 3, SPN 190 / FMI 0 |
+| **Diagnostics** | Injectable DTCs on DM1 (PGN 65226), from the config (default SPN 110 / FMI 3 and SPN 190 / FMI 0) · DM11 (PGN 65235) from the ELD clears them |
 | **UI** | Web GUI (default `http://127.0.0.1:8080`) or interactive CLI |
 
 ### Broadcast PGNs
@@ -183,7 +183,7 @@ Other options: `--host` / `--port` to change the address, `--no-browser` to skip
 3. **Signals** tab: drag sliders or use presets (e.g. Engine Speed **0 rpm / Idle 650 / Cruise 1250 / Rated 2100**). Odometer and engine hours count up on their own while running.
 4. Click **Details** on any PGN card to see the technical data: PGN, CAN ID, cycle time (editable), live CAN payload, DLC and priority. The panels are collapsed by default.
 5. **ECU & Vehicle (VIN)** tab: edit the VIN and click **Set** (rebroadcasts immediately), copy it, view NAME / SA. The chip shows when the node is claimed.
-6. **Diagnostics** tab: inject or clear the two DTCs (sent on DM1 while running).
+6. **Diagnostics** tab: inject or clear the DTCs from the config (sent on DM1 while running). Each card shows its lamp and occurrence count; the count goes up by one each time a DTC becomes active again. A DM11 request from the ELD (PGN 65235) clears all active DTCs; a request sent to SA 0x00 gets an ACK, a global one none. To test an ECU that refuses to clear, NACK or ignore requests for DM11 on the Faults tab.
 7. Click **QUIT** when finished.
 
 ### Bus health indicator
@@ -254,7 +254,7 @@ The **Faults** tab makes the ECU misbehave on purpose, to check how an ELD copes
 | **Requests: Delay** | The reply after the set delay (200 ms … 10 s), with the data current at that moment. | Timeouts, late VIN |
 | **Freeze odometer / engine hours** | The meter stops counting while the engine runs. | Driving with a stuck odometer |
 
-Requests faults apply to **All PGNs** or one PGN (VIN, VD, HRVD, HOURS, EEC1, CCVS, DM1). To make the odometer jump or run backwards use the ± buttons on the Signals tab; the VIN can be changed mid-trip on ECU & Vehicle.
+Requests faults apply to **All PGNs** or one PGN (VIN, VD, HRVD, HOURS, EEC1, CCVS, DM1, DM11). To make the odometer jump or run backwards use the ± buttons on the Signals tab; the VIN can be changed mid-trip on ECU & Vehicle.
 
 While any fault is on, the Faults tab pill and the footer show how many; **ECU silent** also turns the top status amber (**ECU SILENT · FAULT INJECTED**) so it is not mistaken for a wiring problem. **Clear All Faults** puts everything back to normal.
 
@@ -308,7 +308,7 @@ Step actions (several may share one step):
 | `odometer_mi`, `engine_hours` | `odometer_mi = 512340.7` | Set a meter |
 | `odometer_add_mi`, `engine_hours_add` | `odometer_add_mi = -10` | Jump a meter (negative = backwards) |
 | `vin` | `vin = "3AKJHHDR1LSLA4213"` | New VIN, broadcast at once |
-| `dtc` | `{ spn110_fmi3 = true, spn190_fmi0 = false }` | DM1 faults |
+| `dtc` | `{ spn110_fmi3 = true, spn190_fmi0 = false }` | DM1 faults: `spn<SPN>_fmi<FMI>` of a DTC in the config (one that is not there is skipped and noted in the trace) |
 | `fault` | `{ silent = true }`, `{ ccvs = false }`, `{ spn84 = "not_available" }`, `{ requests = { mode = "delay", pgn = "vin", delay = "3s" } }`, `{ freeze_odometer = true }` | Everything on the Faults tab: `silent`; `eec1` / `ccvs` / `vd` / `hrvd` / `hours` broadcast on/off; `spn190` / `spn84` / `spn245` / `spn917` / `spn247` = `"normal"` / `"not_available"` / `"error"`; `requests` with `mode` = normal / ignore / nack / delay, `pgn` = number, `"vin"` or `"all"`, `delay`; `freeze_odometer`, `freeze_hours` |
 | `clear_faults` | `true` | All faults back to normal |
 | `note` | `"…"` | A line in the trace and the step list |
@@ -370,7 +370,8 @@ For Virtual mode you can also use the names `vcan0`, `vcan1`, `vcan2`. Use `--no
 | `get <key>` / `set <key> <value>` | Read / change a signal (keys below) |
 | `vin [value]` | Show or set the VIN (rebroadcasts PGN 65260 if running) |
 | `ignition [on\|run]` | Show or set the ignition: `on` = key ON, engine off; `run` = engine running |
-| `dtc 1\|2\|both on\|off` | Inject / clear DM1 faults |
+| `dtc` | List the configured DTCs and which are active |
+| `dtc <n\|spnX_fmiY\|all> on\|off` | Inject / clear DM1 faults (`n` = number in the list) |
 | `requests [clear]` | Requests received from other nodes and how they were answered |
 | `trace [N]` | Last N lines (default 40) of the [J1939 trace](#requests-and-j1939-trace) and its file path |
 | `stop` / `start` / `reset` / `help` / `quit` | Session control |
@@ -413,9 +414,21 @@ vin = "1HTMMAAL5GH123456"
 persist_meters = true    # keep odometer / engine hours per VIN between runs
 ignition = "run"         # "run" = engine running | "on" = key ON, engine off (0 rpm / 0 mph)
 
-[diagnostics]
-dtc_spn110_fmi3 = false   # SPN 110 / FMI 3: amber warning
-dtc_spn190_fmi0 = false   # SPN 190 / FMI 0: red stop
+# DTCs the Diagnostics tab can inject. Leave the list out to get the two below.
+[[diagnostics.dtc]]
+spn = 110
+fmi = 3
+lamp = "amber"            # amber | red | mil | protect
+name = "Engine Coolant Temp Voltage High"
+description = "Voltage Above Normal, Or Shorted To High Source."
+oc = 1                    # occurrence count (0-126)
+active = false            # injected at START
+
+[[diagnostics.dtc]]
+spn = 190
+fmi = 0
+lamp = "red"
+name = "Engine Crankshaft Overspeed"
 
 [pgn.eec1]
 enabled = true
@@ -441,6 +454,8 @@ enabled = true
 cycle_ms = 1000
 spn247_engine_hours = 10000.0   # starting engine hours
 ```
+
+Older configs switch the built-in DTCs with `dtc_spn110_fmi3 = true` / `dtc_spn190_fmi0 = true` under `[diagnostics]`; that still works, also as `dtc_spn<SPN>_fmi<FMI>` for any DTC in the list.
 
 Every `[pgn.*]` section is optional; missing values use the defaults from the table above. Set `enabled = false` to stop broadcasting a PGN.
 

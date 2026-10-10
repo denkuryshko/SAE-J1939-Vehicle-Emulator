@@ -31,6 +31,8 @@ from j1939_emulator.diagnostics import (
     DM1_PDU_FORMAT,
     DM1_PDU_SPECIFIC,
     DM1_PRIORITY,
+    PGN_DM1,
+    PGN_DM11,
     DiagnosticState,
     encode_dm1,
 )
@@ -77,8 +79,8 @@ _GLOBAL_ADDRESS = 0xFF
 # Acknowledgement PGN 59392 (0xE800)
 _ACK_PDU_FORMAT = 0xE8
 _ACK_PRIORITY = 6
+_ACK_CONTROL_ACK = 0x00
 _ACK_CONTROL_NACK = 0x01
-PGN_DM1 = 65226
 
 # PGN → (priority, encoder) answered on Request (PGN 59904).
 _REQUESTABLE: dict[int, tuple[int, Callable[[SignalState], bytes]]] = {
@@ -103,6 +105,7 @@ _PGN_NAMES = {
     65217: "HRVD",
     65253: "HOURS",
     PGN_DM1: "DM1",
+    PGN_DM11: "DM11 (clear DTCs)",
     _PGN_ADDRESS_CLAIM: "Address Claim",
 }
 _USB_SETTLE_S = 0.50
@@ -687,22 +690,15 @@ class EmulatorSession:
                 self._broadcast_vin_locked()
         return cleaned
 
-    def set_dtc1(self, active: bool) -> None:
-        self.diagnostics.set_dtc1(active)
+    def set_dtc(self, key: str, active: bool) -> None:
+        """Inject or clear one configured DTC ("spn110_fmi3"); KeyError if it is not configured."""
+        self.diagnostics.set_active(key, active)
         with self._lock:
             self._sync_dm1_locked()
 
-    def set_dtc2(self, active: bool) -> None:
-        self.diagnostics.set_dtc2(active)
-        with self._lock:
-            self._sync_dm1_locked()
-
-    def set_dtcs(self, dtc1: bool | None = None, dtc2: bool | None = None) -> None:
-        if dtc1 is not None:
-            self.diagnostics.dtc_spn110_fmi3 = bool(dtc1)
-        if dtc2 is not None:
-            self.diagnostics.dtc_spn190_fmi0 = bool(dtc2)
-        self.diagnostics.notify()
+    def set_dtcs(self, states: dict[str, bool]) -> None:
+        """Several DTCs at once, e.g. {"spn110_fmi3": True}; nothing changes if a key is unknown."""
+        self.diagnostics.set_many(states)
         with self._lock:
             self._sync_dm1_locked()
 
@@ -711,8 +707,8 @@ class EmulatorSession:
         with self._lock:
             self._sync_dm1_locked()
 
-    def inject_both_dtcs(self) -> None:
-        self.diagnostics.inject_both()
+    def inject_all_dtcs(self) -> None:
+        self.diagnostics.inject_all()
         with self._lock:
             self._sync_dm1_locked()
 
@@ -1023,6 +1019,8 @@ class EmulatorSession:
             self._send((pgn >> 8) & 0xFF, pgn & 0xFF, priority, lambda: encode(s), event, done)
         elif pgn == PGN_DM1:
             self._send_dm1(event, done)
+        elif pgn == PGN_DM11:
+            self._clear_on_dm11(src_address, dest_address, event)
         elif dest_address != _GLOBAL_ADDRESS:
             # J1939-21: a destination-specific request for an unsupported PGN gets a NACK
             # (sent global, requester in byte 5) so the requester need not wait for a timeout.
@@ -1031,9 +1029,29 @@ class EmulatorSession:
             self._resolve(event, "ignored: not supported (global request)")
 
     def _send_nack(self, src_address: int, pgn: int, event: RequestEvent, done: str) -> None:
-        nack = [_ACK_CONTROL_NACK, 0xFF, 0xFF, 0xFF, src_address & 0xFF,
-                pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF]
-        self._send(_ACK_PDU_FORMAT, _GLOBAL_ADDRESS, _ACK_PRIORITY, lambda: nack, event, done)
+        self._send_ack(_ACK_CONTROL_NACK, src_address, pgn, event, done)
+
+    def _send_ack(
+        self, control: int, src_address: int, pgn: int, event: RequestEvent, done: str
+    ) -> None:
+        """Acknowledgement PGN 59392, sent global with the requester in byte 5 (J1939-21)."""
+        frame = [control, 0xFF, 0xFF, 0xFF, src_address & 0xFF,
+                 pgn & 0xFF, (pgn >> 8) & 0xFF, (pgn >> 16) & 0xFF]
+        self._send(_ACK_PDU_FORMAT, _GLOBAL_ADDRESS, _ACK_PRIORITY, lambda: frame, event, done)
+
+    def _clear_on_dm11(self, src_address: int, dest_address: int, event: RequestEvent) -> None:
+        """DM11: clear all active DTCs; ACK a request sent to this ECU, stay quiet on a global one.
+
+        Called from the can-j1939 receive thread, so no session lock (see _on_request).
+        """
+        cleared = self.diagnostics.active_count
+        self.diagnostics.clear_all()
+        self._send_dm1()  # the ELD sees the faults gone at once
+        done = f"cleared {cleared} active DTC{'' if cleared == 1 else 's'} (DM11)"
+        if dest_address == _GLOBAL_ADDRESS:
+            self._resolve(event, done)
+        else:
+            self._send_ack(_ACK_CONTROL_ACK, src_address, PGN_DM11, event, f"{done}, ACK")
 
     def _answer_later(
         self, delay_ms: int, src_address: int, dest_address: int, pgn: int, event: RequestEvent
