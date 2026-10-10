@@ -41,6 +41,10 @@ enabled = true
 cycle_ms = 1000
 spn245_total_mi = 248912.4   # одометр, милі
 
+[pgn.hrvd]
+enabled = true
+cycle_ms = 1000
+
 [pgn.hours]
 enabled = true
 cycle_ms = 1000

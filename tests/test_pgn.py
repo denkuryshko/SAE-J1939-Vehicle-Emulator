@@ -5,6 +5,7 @@ from j1939_emulator.pgn import (
     encode_ccvs,
     encode_eec1,
     encode_hours,
+    encode_hrvd,
     encode_vd,
 )
 
@@ -30,6 +31,12 @@ def test_vd_total_distance_in_bytes_5_8_trip_not_available():
     data = encode_vd(SignalState(spn245_total_mi=1000))
     assert data[:4] == b"\xff" * 4
     assert int.from_bytes(data[4:], "little") == round(1000 * 1.609344 / 0.125)
+
+
+def test_hrvd_same_odometer_5_m_per_bit_in_bytes_1_4_trip_not_available():
+    data = encode_hrvd(SignalState(spn245_total_mi=1000))
+    assert int.from_bytes(data[:4], "little") == 321869  # 1609344 m / 5
+    assert data[4:] == b"\xff" * 4
 
 
 def test_hours_spn247_0_05_h_per_bit():

@@ -99,6 +99,15 @@ def test_engine_hours_answered_on_request(bench):
     assert _collect(eld, 0.5, 0xFEE5)
 
 
+def test_hrvd_broadcast_and_answered_on_request(bench):
+    _session, eld = bench
+    _drain(eld)
+    assert _collect(eld, 1.2, 0xFEC1)  # cyclic, 1 s
+    _drain(eld)
+    _request(eld, 65217)
+    assert _collect(eld, 0.3, 0xFEC1)
+
+
 def test_unsupported_pgn_nacked_only_when_addressed(bench):
     _session, eld = bench
     _drain(eld)

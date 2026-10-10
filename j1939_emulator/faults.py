@@ -30,6 +30,7 @@ BROADCAST_PGNS = {
     "eec1": ("EEC1", 61444),
     "ccvs": ("CCVS", 65265),
     "vd": ("VD", 65248),
+    "hrvd": ("HRVD", 65217),
     "hours": ("HOURS", 65253),
 }
 _SPN_TEXT = {SPN_NOT_AVAILABLE: "not available (0xFF…)", SPN_ERROR: "error (0xFE…)"}

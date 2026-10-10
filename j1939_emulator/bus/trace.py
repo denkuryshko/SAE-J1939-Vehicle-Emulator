@@ -41,6 +41,7 @@ _PGN_NAMES = {
     61444: "EEC1",
     65265: "CCVS",
     65248: "VD",
+    65217: "HRVD",
     65253: "HOURS",
 }
 _ACK_CONTROL = {0: "ACK", 1: "NACK", 2: "Access Denied", 3: "Cannot Respond"}
@@ -186,6 +187,13 @@ def decode_payload(pgn: int, data: bytes) -> str:
         else:
             value = km
         return f"SPN 245 Total Distance: {value}"
+    if pgn == 65217:
+        km = _scaled(data, 0, 4, 0.005)
+        if isinstance(km, float):
+            value = f"{_num(km / _KM_PER_MI, 2)} mi ({_num(km, 3)} km)"
+        else:
+            value = km
+        return f"SPN 917 HR Total Distance: {value}"
     if pgn == 65253:
         hours = _scaled(data, 0, 4, 0.05)
         value = f"{_num(hours, 2)} h" if isinstance(hours, float) else hours
@@ -238,7 +246,7 @@ class TrafficEntry:
     data: bytes
     kind: str
     text: str = ""  # error summary, or the reassembled message on a transfer's last TP.DT
-    cyclic: bool = False  # one of this ECU's cyclic broadcasts (EEC1, CCVS, VD, HOURS)
+    cyclic: bool = False  # one of this ECU's cyclic broadcasts (EEC1, CCVS, VD, HRVD, HOURS)
 
 
 def _payload_text(pgn: int, payload: bytes) -> str:

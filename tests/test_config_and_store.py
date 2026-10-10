@@ -89,3 +89,10 @@ def test_ignition_from_config(tmp_path):
     assert not cfg.signals.engine_running
     with pytest.raises(ValueError):
         load_config(_write(tmp_path, BUS + '[vehicle]\nignition = "off"\n'))
+
+
+def test_hrvd_section_switches_and_times_the_broadcast(tmp_path):
+    assert load_config(_write(tmp_path, BUS)).signals.hrvd_enabled
+    cfg = load_config(_write(tmp_path, BUS + "[pgn.hrvd]\nenabled = false\ncycle_ms = 500\n"))
+    assert not cfg.signals.hrvd_enabled
+    assert cfg.signals.cycle_hrvd_ms == 500

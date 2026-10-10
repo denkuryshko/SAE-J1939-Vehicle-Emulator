@@ -21,6 +21,7 @@ OVERRIDABLE_SPNS = {
     "spn190": (190, "eec1"),
     "spn84": (84, "ccvs"),
     "spn245": (245, "vd"),
+    "spn917": (917, "hrvd"),
     "spn247": (247, "hours"),
 }
 
@@ -46,6 +47,9 @@ class SignalState:
     spn245_total_mi: float = 248912.4
     vd_enabled: bool = True
 
+    # HRVD: the same odometer as VD (spn245_total_mi), at 5 m resolution
+    hrvd_enabled: bool = True
+
     # HOURS
     spn247_engine_hours: float = 10000.0
     hours_enabled: bool = True
@@ -54,6 +58,7 @@ class SignalState:
     cycle_eec1_ms: int = 20
     cycle_ccvs_ms: int = 100
     cycle_vd_ms: int = 1000
+    cycle_hrvd_ms: int = 1000
     cycle_hours_ms: int = 1000
 
     # Fault injection (runtime only, never read from or saved to the config):
@@ -164,6 +169,8 @@ class SignalState:
             "cycle_ccvs_ms": "cycle_ccvs_ms",
             "vd.cycle_ms": "cycle_vd_ms",
             "cycle_vd_ms": "cycle_vd_ms",
+            "hrvd.cycle_ms": "cycle_hrvd_ms",
+            "cycle_hrvd_ms": "cycle_hrvd_ms",
             "hours.cycle_ms": "cycle_hours_ms",
             "cycle_hours_ms": "cycle_hours_ms",
         }
@@ -177,6 +184,7 @@ class SignalState:
 CAN_ID_EEC1 = 0x0CF00400
 CAN_ID_CCVS = 0x18FEF100
 CAN_ID_VD = 0x18FEE000
+CAN_ID_HRVD = 0x18FEC100
 CAN_ID_HOURS = 0x18FEE500
 
 
@@ -246,6 +254,25 @@ def encode_vd(state: SignalState) -> bytes:
     )
 
 
+def encode_hrvd(state: SignalState) -> bytes:
+    """HRVD PGN 65217 — bytes 1-4 SPN 917 total distance (5 m/bit), bytes 5-8 trip (SPN 918, not available)."""
+    dist_m = state.spn245_total_mi * KM_PER_MI * 1000.0
+    raw_dist = min(0xFAFFFFFF, max(0, round(dist_m / 5.0)))
+    raw_dist = _override(state, "spn917", raw_dist, 4)
+    return bytes(
+        [
+            raw_dist & 0xFF,
+            (raw_dist >> 8) & 0xFF,
+            (raw_dist >> 16) & 0xFF,
+            (raw_dist >> 24) & 0xFF,
+            0xFF,
+            0xFF,
+            0xFF,
+            0xFF,
+        ]
+    )
+
+
 def encode_hours(state: SignalState) -> bytes:
     """HOURS PGN 65253 — bytes 1-4 SPN 247 engine hours (0.05 h/bit); SPN 249 revolutions not available."""
     raw_hours = min(0xFAFFFFFF, max(0, round(state.spn247_engine_hours / 0.05)))
@@ -273,5 +300,6 @@ def all_payloads(state: SignalState) -> dict[str, str]:
         "eec1": payload_hex(encode_eec1(state)),
         "ccvs": payload_hex(encode_ccvs(state)),
         "vd": payload_hex(encode_vd(state)),
+        "hrvd": payload_hex(encode_hrvd(state)),
         "hours": payload_hex(encode_hours(state)),
     }

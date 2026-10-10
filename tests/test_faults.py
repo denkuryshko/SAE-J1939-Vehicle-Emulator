@@ -14,6 +14,7 @@ from j1939_emulator.pgn import (
     CAN_ID_CCVS,
     CAN_ID_EEC1,
     CAN_ID_HOURS,
+    CAN_ID_HRVD,
     CAN_ID_VD,
     SPN_ERROR,
     SPN_NOT_AVAILABLE,
@@ -21,6 +22,7 @@ from j1939_emulator.pgn import (
     encode_ccvs,
     encode_eec1,
     encode_hours,
+    encode_hrvd,
     encode_vd,
 )
 
@@ -72,7 +74,8 @@ def _last_result(session):
 def test_spn_overrides_reach_the_wire():
     s = SignalState(spn190_rpm=800, spn84_speed_mph=35)
     s.spn_override = {"spn190": SPN_NOT_AVAILABLE, "spn84": SPN_ERROR,
-                      "spn245": SPN_ERROR, "spn247": SPN_NOT_AVAILABLE}
+                      "spn245": SPN_ERROR, "spn247": SPN_NOT_AVAILABLE,
+                      "spn917": SPN_ERROR}
     assert encode_eec1(s)[3:5] == b"\xff\xff"
     assert encode_ccvs(s)[1:3] == b"\x00\xfe"
     assert encode_vd(s)[4:8] == b"\x00\x00\x00\xfe"
@@ -81,6 +84,8 @@ def test_spn_overrides_reach_the_wire():
     assert decode(CAN_ID_CCVS, encode_ccvs(s)).endswith("error")
     assert decode(CAN_ID_VD, encode_vd(s)).endswith("error")
     assert decode(CAN_ID_HOURS, encode_hours(s)).endswith("not available")
+    assert encode_hrvd(s)[0:4] == b"\x00\x00\x00\xfe"
+    assert decode(CAN_ID_HRVD, encode_hrvd(s)).endswith("error")
 
 
 def test_freeze_meters():

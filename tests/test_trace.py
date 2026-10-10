@@ -18,11 +18,13 @@ from j1939_emulator.pgn import (
     CAN_ID_CCVS,
     CAN_ID_EEC1,
     CAN_ID_HOURS,
+    CAN_ID_HRVD,
     CAN_ID_VD,
     SignalState,
     encode_ccvs,
     encode_eec1,
     encode_hours,
+    encode_hrvd,
     encode_vd,
 )
 
@@ -145,6 +147,7 @@ def test_decode_reads_back_the_encoders():
     assert decode(CAN_ID_CCVS, encode_ccvs(s)) == "SPN 84 Wheel-Based Speed: 35 mph (56.33 km/h)"
     assert decode(CAN_ID_VD, encode_vd(s)).startswith("SPN 245 Total Distance: 248912.4 mi")
     assert decode(CAN_ID_HOURS, encode_hours(s)) == "SPN 247 Engine Hours: 10000.05 h"
+    assert decode(CAN_ID_HRVD, encode_hrvd(s)).startswith("SPN 917 HR Total Distance: 248912.4")
 
 
 def test_decode_special_values_and_protocol_frames():

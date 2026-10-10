@@ -44,6 +44,7 @@ from j1939_emulator.pgn import (
     encode_ccvs,
     encode_eec1,
     encode_hours,
+    encode_hrvd,
     encode_vd,
     payload_hex,
 )
@@ -505,6 +506,34 @@ def build_vd(session, payload_labels: dict) -> None:
         follow_meter(sig, "spn245_total_mi", sync_odo, payload_labels["vd"], encode_vd, 0.05)
 
 
+def build_hrvd(session, payload_labels: dict) -> None:
+    sig = session.signals
+    with ui.element("div").classes("pgn-card"):
+        details, _ = pgn_header(
+            "HRVD",
+            "High Resolution Vehicle Distance",
+            65217,
+            0x18FEC100,
+            sig.cycle_hrvd_ms,
+            lambda ms: (setattr(sig, "cycle_hrvd_ms", ms), sig.notify()),
+            session,
+            "hrvd",
+        )
+        with details:
+            payload_labels["hrvd"] = payload_strip(6, payload_hex(encode_hrvd(sig)))
+        with ui.element("div").classes("signal-box sig-row"):
+            _signal_label("SPN 917", "High Resolution Total Vehicle Distance")
+            disp = _signal_value("mi", sig.spn245_total_mi, 3)
+            with ui.element("div").classes("sig-controls"):
+                ui.icon("info_outline").classes("sig-hint").tooltip(
+                    "The VD odometer (SPN 245) at 5 m resolution; change it on the VD card."
+                )
+        follow_meter(
+            sig, "spn245_total_mi", lambda v: disp.set_text(_fmt_value(v, 3)),
+            payload_labels["hrvd"], encode_hrvd, 0.003,
+        )
+
+
 def build_hours(session, payload_labels: dict) -> None:
     sig = session.signals
     with ui.element("div").classes("pgn-card"):
@@ -925,7 +954,7 @@ def build_traffic_pane(session) -> Callable[[], None]:
             f'placeholder="Filter: 65260   sa:F9   type:request   -tp.dt" title="{_FILTER_HELP}" '
             f"oninput=\"j1939Traffic.filter('{tid}')\">"
             f'<label class="traffic-chk"><input id="{tid}-cyc" type="checkbox" '
-            f"onchange=\"j1939Traffic.filter('{tid}')\"> Hide cyclic (EEC1, CCVS, VD, HOURS)</label>"
+            f"onchange=\"j1939Traffic.filter('{tid}')\"> Hide cyclic (EEC1, CCVS, VD, HRVD, HOURS)</label>"
             f'<span id="{tid}-count" class="traffic-count"></span>'
             f"</div>"
             f'<div class="traffic-box">'
@@ -1298,6 +1327,7 @@ _SPN_NAMES = {
     "spn190": "Engine Speed",
     "spn84": "Wheel-Based Vehicle Speed",
     "spn245": "Total Vehicle Distance",
+    "spn917": "HR Total Vehicle Distance",
     "spn247": "Engine Total Hours",
 }
 _REQUEST_MODE_OPTIONS = {
@@ -1310,6 +1340,7 @@ _REQUEST_TARGET_OPTIONS = {
     REQUEST_TARGET_ALL: "All PGNs",
     65260: "65260 VI (VIN)",
     65248: "65248 VD (odometer)",
+    65217: "65217 HRVD (odometer, 5 m)",
     65253: "65253 HOURS",
     61444: "61444 EEC1",
     65265: "65265 CCVS",

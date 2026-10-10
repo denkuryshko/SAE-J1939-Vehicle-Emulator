@@ -74,6 +74,7 @@ def load_config(path: str | Path) -> AppConfig:
     _apply_pgn(signals, raw.get("pgn", {}).get("eec1"), "eec1")
     _apply_pgn(signals, raw.get("pgn", {}).get("ccvs"), "ccvs")
     _apply_pgn(signals, raw.get("pgn", {}).get("vd"), "vd")
+    _apply_pgn(signals, raw.get("pgn", {}).get("hrvd"), "hrvd")
     _apply_pgn(signals, raw.get("pgn", {}).get("hours"), "hours")
     signals.engine_running = _engine_running(raw.get("vehicle", {}) or {})
 
@@ -179,6 +180,11 @@ def _apply_pgn(signals: SignalState, section: dict | None, name: str) -> None:
                 signals.spn245_total_mi = float(section[key])
         if "cycle_ms" in section:
             signals.cycle_vd_ms = int(section["cycle_ms"])
+    elif name == "hrvd":
+        # No value of its own: HRVD sends the [pgn.vd] odometer.
+        signals.hrvd_enabled = enabled
+        if "cycle_ms" in section:
+            signals.cycle_hrvd_ms = int(section["cycle_ms"])
     elif name == "hours":
         signals.hours_enabled = enabled
         if "spn247_engine_hours" in section:
