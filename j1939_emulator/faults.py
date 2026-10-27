@@ -29,6 +29,7 @@ MAX_REQUEST_DELAY_MS = 10_000
 BROADCAST_PGNS = {
     "eec1": ("EEC1", 61444),
     "ccvs": ("CCVS", 65265),
+    "tco1": ("TCO1", 65132),
     "vd": ("VD", 65248),
     "hrvd": ("HRVD", 65217),
     "hours": ("HOURS", 65253),

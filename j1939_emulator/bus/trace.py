@@ -1,4 +1,4 @@
-"""Decoded J1939 trace of everything the ECU exchanges except its own cyclic broadcasts.
+"""Decoded J1939 trace of everything the ECU exchanges except most of its own cyclic broadcasts.
 
 Meant for bench debugging of an ELD: which requests it sends and to which address,
 which transport frames it answers with (CTS, EOMA, Abort), what the emulator sent back
@@ -7,6 +7,8 @@ and when, and send / bus errors. One file per START, kept in the app state direc
 Every frame (cyclic broadcasts included) also goes into small in-memory rings of raw
 entries for the GUI Traffic Monitor; the rings never reach the file. Cyclic broadcasts
 have a ring of their own, so a 20 ms EEC1 cannot push an ELD request out of view.
+The vehicle speed broadcasts (CCVS, TCO1) do reach the file, sampled: on change and as a
+periodic heartbeat, so a trace shows what speed the ELD was offered.
 """
 
 from __future__ import annotations
@@ -29,6 +31,11 @@ _MAX_FILE_BYTES = 50 * 1024 * 1024
 _RECENT_LINES = 500
 _ERROR_SUMMARY_S = 1.0
 TRAFFIC_ROWS = 1000  # raw frames kept in memory for the Traffic Monitor, per ring
+# Cyclic broadcasts written to the file, sampled: on change, at most every _SAMPLE_MIN_S,
+# and at least every _SAMPLE_MAX_S while unchanged.
+_SAMPLED_BROADCASTS = {65265, 65132}
+_SAMPLE_MIN_S = 1.0
+_SAMPLE_MAX_S = 10.0
 
 _PGN_NAMES = {
     59904: "Request",
@@ -41,6 +48,7 @@ _PGN_NAMES = {
     65235: "DM11",
     61444: "EEC1",
     65265: "CCVS",
+    65132: "TCO1",
     65248: "VD",
     65217: "HRVD",
     65253: "HOURS",
@@ -181,6 +189,14 @@ def decode_payload(pgn: int, data: bytes) -> str:
         else:
             value = kmh
         return f"SPN 84 Wheel-Based Speed: {value}"
+    if pgn == 65132:
+        kmh = _scaled(data, 6, 2, 1 / 256)
+        if isinstance(kmh, float):
+            value = f"{_num(kmh / _KM_PER_MI, 1)} mph ({_num(kmh, 2)} km/h)"
+        else:
+            value = kmh
+        motion = {0: "no", 1: "yes", 2: "error"}.get(data[0] >> 6, "not available") if data else "missing"
+        return f"SPN 1624 Tachograph Speed: {value}; SPN 1611 motion: {motion}"
     if pgn == 65248:
         km = _scaled(data, 4, 4, 0.125)
         if isinstance(km, float):
@@ -247,7 +263,7 @@ class TrafficEntry:
     data: bytes
     kind: str
     text: str = ""  # error summary, or the reassembled message on a transfer's last TP.DT
-    cyclic: bool = False  # one of this ECU's cyclic broadcasts (EEC1, CCVS, VD, HRVD, HOURS)
+    cyclic: bool = False  # one of this ECU's cyclic broadcasts (EEC1, CCVS, TCO1, VD, HRVD, HOURS)
 
 
 def _payload_text(pgn: int, payload: bytes) -> str:
@@ -267,6 +283,7 @@ class J1939Trace(can.Listener):
         self._traffic: deque[TrafficEntry] = deque(maxlen=TRAFFIC_ROWS)
         self._cyclic: deque[TrafficEntry] = deque(maxlen=TRAFFIC_ROWS)
         self._traffic_seq = 0
+        self._sampled: dict[int, tuple[float, bytes, bool]] = {}  # arb_id -> (time, data, ok) written
         self._last_t: float | None = None
         self._transfers: dict[tuple[int, int], dict] = {}
         self._errors = 0
@@ -322,9 +339,29 @@ class J1939Trace(can.Listener):
         )
 
     def broadcast(self, arb_id: int, data: bytes, ok: bool) -> None:
-        """A cyclic broadcast (EEC1, CCVS …): Traffic Monitor only, never written to the file."""
+        """A cyclic broadcast (EEC1, CCVS …): Traffic Monitor; vehicle speed also to the file, sampled."""
         direction = "TX" if ok else "TX!"
         self._record(direction, arb_id, data, frame_type(direction, arb_id, data), cyclic=True)
+        prio, pgn, sa, da = split_id(arb_id)
+        if pgn not in _SAMPLED_BROADCASTS:
+            return
+        now = time.time()
+        with self._lock:
+            last = self._sampled.get(arb_id)
+            if last is not None:
+                age = now - last[0]
+                changed = (data, ok) != last[1:]
+                if age < _SAMPLE_MIN_S or (not changed and age < _SAMPLE_MAX_S):
+                    return
+            self._sampled[arb_id] = (now, data, ok)
+        self._flush_errors()
+        meaning = f"{decode_payload(pgn, data)}  [cyclic {pgn_name(pgn)}, sampled]"
+        if not ok:
+            meaning += "  [send failed]"
+        self._line(
+            f"{direction:<4} {arb_id:08X}  P{prio}  {pgn:>5}  {sa:02X}->{da:02X}  "
+            f"{data.hex(' ').upper():<23}  {meaning}"
+        )
 
     def note(self, text: str) -> None:
         self._line(f"---  {text}")

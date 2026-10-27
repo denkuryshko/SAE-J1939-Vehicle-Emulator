@@ -266,3 +266,12 @@ def test_dm11_refused_by_request_fault(bench):
     _request(eld, 65235)
     assert _collect(eld, 0.4, 0xE8FF)[0][0] == 0x01  # NACK
     assert session.diagnostics.active_count == 1
+
+
+def test_tco1_broadcast_and_answered_on_request(bench):
+    _session, eld = bench
+    _drain(eld)
+    assert _collect(eld, 0.3, 0xFE6C)  # cyclic, 50 ms
+    _drain(eld)
+    _request(eld, 65132)
+    assert _collect(eld, 0.3, 0xFE6C)

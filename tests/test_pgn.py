@@ -6,6 +6,7 @@ from j1939_emulator.pgn import (
     encode_eec1,
     encode_hours,
     encode_hrvd,
+    encode_tco1,
     encode_vd,
 )
 
@@ -102,3 +103,19 @@ def test_key_on_engine_off_sends_zero_and_keeps_settings():
 
     s.set_spn("engine_running", True)
     assert encode_eec1(s) == encode_eec1(SignalState(spn190_rpm=650))
+
+
+def test_tco1_same_speed_as_ccvs_in_bytes_7_8_with_motion():
+    data = encode_tco1(SignalState(spn84_speed_mph=60))
+    assert data[6:8] == encode_ccvs(SignalState(spn84_speed_mph=60))[1:3]
+    assert data[0] == 0x7F  # SPN 1611 motion detected (01), driver states not available
+    assert data[1:6] == b"\xff" * 5
+    standing = encode_tco1(SignalState(spn84_speed_mph=0))
+    assert standing[0] == 0x3F and standing[6:8] == b"\x00\x00"
+
+
+def test_tco1_sends_0_while_engine_off_and_motion_na_on_fault():
+    s = SignalState(spn84_speed_mph=60, engine_running=False)
+    assert encode_tco1(s)[6:8] == b"\x00\x00"
+    s = SignalState(spn84_speed_mph=60, spn_override={"spn1624": "not_available"})
+    assert encode_tco1(s)[0] == 0xFF and encode_tco1(s)[6:8] == b"\xff\xff"

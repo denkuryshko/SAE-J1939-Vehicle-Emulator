@@ -46,6 +46,7 @@ from j1939_emulator.pgn import (
     encode_eec1,
     encode_hours,
     encode_hrvd,
+    encode_tco1,
     encode_vd,
     payload_hex,
 )
@@ -482,6 +483,40 @@ def build_ccvs(session, payload_labels: dict) -> None:
             decimals=1,
         )
         follow_value(sig, "spn84_speed_mph", sync_speed, payload_labels["ccvs"], encode_ccvs)
+
+
+def build_tco1(session, payload_labels: dict) -> None:
+    sig = session.signals
+    with ui.element("div").classes("pgn-card"):
+        details, badges = pgn_header(
+            "TCO1",
+            "Tachograph",
+            65132,
+            0x0CFE6C00,
+            sig.cycle_tco1_ms,
+            lambda ms: (setattr(sig, "cycle_tco1_ms", ms), sig.notify()),
+            session,
+            "tco1",
+        )
+        with details:
+            payload_labels["tco1"] = payload_strip(3, payload_hex(encode_tco1(sig)))
+        with badges:
+            engine_off_note(
+                sig, "ENGINE OFF · 0 mph",
+                "Engine off: sending 0 mph. The CCVS speed is used once the engine runs.",
+            )
+        with ui.element("div").classes("signal-box sig-row"):
+            _signal_label("SPN 1624", "Tachograph Vehicle Speed")
+            disp = _signal_value("mph", sig.spn84_speed_mph, 1)
+            with ui.element("div").classes("sig-controls"):
+                ui.icon("info_outline").classes("sig-hint").tooltip(
+                    "The CCVS speed (SPN 84), plus SPN 1611 vehicle motion; change it on the "
+                    "CCVS card. For ELDs that read tachograph speed instead of wheel-based speed."
+                )
+        follow_value(
+            sig, "spn84_speed_mph", lambda v: disp.set_text(_fmt_value(v, 1)),
+            payload_labels["tco1"], encode_tco1,
+        )
 
 
 def build_vd(session, payload_labels: dict) -> None:
@@ -955,7 +990,7 @@ def build_traffic_pane(session) -> Callable[[], None]:
             f'placeholder="Filter: 65260   sa:F9   type:request   -tp.dt" title="{_FILTER_HELP}" '
             f"oninput=\"j1939Traffic.filter('{tid}')\">"
             f'<label class="traffic-chk"><input id="{tid}-cyc" type="checkbox" '
-            f"onchange=\"j1939Traffic.filter('{tid}')\"> Hide cyclic (EEC1, CCVS, VD, HRVD, HOURS)</label>"
+            f"onchange=\"j1939Traffic.filter('{tid}')\"> Hide cyclic (EEC1, CCVS, TCO1, VD, HRVD, HOURS)</label>"
             f'<span id="{tid}-count" class="traffic-count"></span>'
             f"</div>"
             f'<div class="traffic-box">'
@@ -1318,6 +1353,7 @@ _SPN_MODE_OPTIONS = {
 _SPN_NAMES = {
     "spn190": "Engine Speed",
     "spn84": "Wheel-Based Vehicle Speed",
+    "spn1624": "Tachograph Vehicle Speed",
     "spn245": "Total Vehicle Distance",
     "spn917": "HR Total Vehicle Distance",
     "spn247": "Engine Total Hours",
@@ -1336,6 +1372,7 @@ _REQUEST_TARGET_OPTIONS = {
     65253: "65253 HOURS",
     61444: "61444 EEC1",
     65265: "65265 CCVS",
+    65132: "65132 TCO1",
     65226: "65226 DM1",
     65235: "65235 DM11 (clear DTCs)",
 }

@@ -12,7 +12,7 @@ Built with **python-can**, **can-j1939** and **NiceGUI**.
 | Area | Capability |
 |------|------------|
 | **Bus** | Real hardware auto-detect or Virtual (`vcan0` / `vcan1` / `vcan2`) · START / STOP / RESET · live TX stats |
-| **Signals** | 5 cyclic PGNs with live controls and presets · odometer and engine hours count up automatically while running |
+| **Signals** | 6 cyclic PGNs with live controls and presets · odometer and engine hours count up automatically while running |
 | **ECU / VIN** | Single node SA `0x00` · J1939-81 address claim (NAME: Industry Group 1 On-Highway, Function 0 Engine) · VIN on PGN 65260, `*`-terminated |
 | **Requests** | Answers Request (PGN 59904), global or to SA `0x00`, for VIN and all broadcast PGNs |
 | **Diagnostics** | Injectable DTCs on DM1 (PGN 65226), from the config (default SPN 110 / FMI 3 and SPN 190 / FMI 0) · DM11 (PGN 65235) from the ELD clears them |
@@ -24,6 +24,7 @@ Built with **python-can**, **can-j1939** and **NiceGUI**.
 |-----|------|--------|-------|---------------------------|---------|
 | 61444 | EEC1: Electronic Engine Controller 1 | `0x0CF00400` | 20 ms | Engine Speed, SPN 190 (`eec1.spn190_rpm`, rpm) | 0 |
 | 65265 | CCVS: Cruise Control / Vehicle Speed | `0x18FEF100` | 100 ms | Wheel-Based Vehicle Speed, SPN 84 (`ccvs.spn84_speed_mph`, mph) | 0 |
+| 65132 | TCO1: Tachograph | `0x0CFE6C00` | 50 ms | Tachograph Vehicle Speed, SPN 1624 (same speed as CCVS), and Vehicle Motion, SPN 1611 | 0 |
 | 65248 | VD: Vehicle Distance | `0x18FEE000` | 1000 ms | Total Vehicle Distance, SPN 245 (`vd.spn245_total_mi`, mi) | 248912.4 |
 | 65217 | HRVD: High Resolution Vehicle Distance | `0x18FEC100` | 1000 ms | High Resolution Total Vehicle Distance, SPN 917 (same odometer as VD, 5 m resolution) | 248912.4 |
 | 65253 | HOURS: Engine Hours, Revolutions | `0x18FEE500` | 1000 ms | Engine Total Hours of Operation, SPN 247 (`hours.spn247_engine_hours`, h) | 10000 |
@@ -34,7 +35,7 @@ All other SPNs in these PGNs are sent as *not available* (`0xFF`).
 
 ### Ignition: key ON with the engine off
 
-The **Ignition** card at the top of the Signals tab switches between **Engine running** and **Key ON · engine off**. With the key ON and the engine off, the ECU stays on the bus, claims its address and answers requests (VIN, odometer, engine hours), but EEC1 and CCVS send 0 rpm and 0 mph and the meters stand still. Switching to **Engine running** sets Engine Speed to idle (650 rpm); switching to **Key ON · engine off** sets it to 0 rpm. It also works the other way: setting Engine Speed to 0 rpm switches to Key ON · engine off, and 600 rpm or more switches to Engine running. The Vehicle Speed setting is kept and sent again once the engine runs. In the CLI use `ignition on` / `ignition run`; in the config use `ignition` under `[vehicle]`.
+The **Ignition** card at the top of the Signals tab switches between **Engine running** and **Key ON · engine off**. With the key ON and the engine off, the ECU stays on the bus, claims its address and answers requests (VIN, odometer, engine hours), but EEC1, CCVS and TCO1 send 0 rpm and 0 mph and the meters stand still. Switching to **Engine running** sets Engine Speed to idle (650 rpm); switching to **Key ON · engine off** sets it to 0 rpm. It also works the other way: setting Engine Speed to 0 rpm switches to Key ON · engine off, and 600 rpm or more switches to Engine running. The Vehicle Speed setting is kept and sent again once the engine runs. In the CLI use `ignition on` / `ignition run`; in the config use `ignition` under `[vehicle]`.
 
 Some ELDs only start asking the ECU for the VIN once they see the engine running. In that case the VIN stays empty in the app while the key is ON; the [requests and J1939 trace](#requests-and-j1939-trace) show whether the ELD sends any request at all.
 
@@ -206,7 +207,7 @@ NO ACK detection needs an adapter that reports error frames (candleLight / gs_us
 The **Logs** panel on the right (below the tabs on narrow screens) is always visible, whatever tab is open, and has two parts for debugging an ELD on the bench:
 
 - **Incoming Requests (PGN 59904)**: the last 50 requests from other nodes. Each row shows who asked, to which address (`0x00` or Global), which PGN, and what the emulator did: answered, answered after waiting for another BAM, NACK, ignored, or "not for this ECU".
-- **J1939 Trace**: a decoded log of every frame exchanged, except the cyclic EEC1 / CCVS / VD / HRVD / HOURS broadcasts. It covers requests, address claims, transport frames from both sides (BAM, RTS, CTS, EOMA, Abort), completed multi-packet payloads (the VIN is shown as text), failed sends and bus-error summaries, all with millisecond times. **Download** saves the file.
+- **J1939 Trace**: a decoded log of every frame exchanged, except the cyclic EEC1 / VD / HRVD / HOURS broadcasts. The vehicle speed broadcasts (CCVS, TCO1) are sampled into it: a line when the speed changes (at most once a second) and every 10 s while it stays the same, so the trace shows what speed the ELD was offered. It covers requests, address claims, transport frames from both sides (BAM, RTS, CTS, EOMA, Abort), completed multi-packet payloads (the VIN is shown as text), failed sends and bus-error summaries, all with millisecond times. **Download** saves the file.
 
 The **Live** switch in the Logs header pauses the panel (it shows **PAUSED**) so a busy trace stops scrolling while you read it. Recording goes on: the trace file keeps every frame, and switching **Live** back on catches the panel up.
 
@@ -227,11 +228,11 @@ If the ELD keeps repeating the request, answers with a TP.CM Abort, or sends a C
 
 ### Traffic monitor
 
-The **Traffic** tab shows every frame on the bus as it happens, including the cyclic EEC1 / CCVS / VD / HRVD / HOURS broadcasts that the trace file leaves out. One row per frame: time, direction (TX / RX), CAN ID, PGN, source and destination address, type (BROADCAST, REQUEST, ACK / NACK, ADDRESS CLAIM, TP.CM BAM / RTS / CTS / EOMA / ABORT, TP.DT, ERROR), the raw data bytes and a **Decoded** column.
+The **Traffic** tab shows every frame on the bus as it happens, including all the cyclic EEC1 / CCVS / TCO1 / VD / HRVD / HOURS broadcasts that the trace file leaves out or samples. One row per frame: time, direction (TX / RX), CAN ID, PGN, source and destination address, type (BROADCAST, REQUEST, ACK / NACK, ADDRESS CLAIM, TP.CM BAM / RTS / CTS / EOMA / ABORT, TP.DT, ERROR), the raw data bytes and a **Decoded** column.
 
 **Decoded** is read back from the bytes on the wire, not from the GUI settings, so it shows what an ELD actually receives: `SPN 190 Engine Speed: 800 rpm`, `SPN 84 Wheel-Based Speed: 35 mph (56.33 km/h)`, `SPN 245 Total Distance: 248912.4 mi (…km)`, `SPN 247 Engine Hours: 10000.05 h`, DM1 faults and lamps (`DM1: SPN 110 / FMI 3 (OC 1); lamps AWL`), requests, ACK / NACK, address claims and transport frames. The last TP.DT of a transfer also shows the whole reassembled message (`VIN 1HTMMAAL5GH123456`). J1939 special values come out as `not available` (0xFF…) or `error` (0xFE…).
 
-**Filter** narrows the view as you type. Words separated by spaces must all match anywhere in the row; `-word` hides rows that contain it. Field filters: `pgn:65260`, `sa:F9`, `da:00`, `id:18EA`, `type:request`, `dir:rx`. Examples: `sa:f9` (everything the ELD sent), `type:request`, `-tp.dt -address`. **Hide cyclic** hides the EEC1 / CCVS / VD / HRVD / HOURS broadcasts so requests and replies stand out. The filter and the checkbox are remembered in the browser; the counter shows how many frames match.
+**Filter** narrows the view as you type. Words separated by spaces must all match anywhere in the row; `-word` hides rows that contain it. Field filters: `pgn:65260`, `sa:F9`, `da:00`, `id:18EA`, `type:request`, `dir:rx`. Examples: `sa:f9` (everything the ELD sent), `type:request`, `-tp.dt -address`. **Hide cyclic** hides the EEC1 / CCVS / TCO1 / VD / HRVD / HOURS broadcasts so requests and replies stand out. The filter and the checkbox are remembered in the browser; the counter shows how many frames match.
 
 **Export** saves the frames in memory as a candump log (`(time) can0 18EA00F9#ECFE00`), all of them whatever the filter, to the traces folder and as a browser download. Replay it with `canplayer`, or open it in SavvyCAN or Wireshark.
 
@@ -247,14 +248,14 @@ The **Faults** tab makes the ECU misbehave on purpose, to check how an ELD copes
 | Fault | What the ELD sees | Typical check |
 |-------|-------------------|---------------|
 | **ECU silent** | Nothing at all from SA 0x00: no broadcasts, no replies, no DM1, no address claim. The ECU stays connected; requests are logged as ignored. | Engine synchronization / ECM connectivity malfunction |
-| **Broadcast off** (per PGN) | EEC1, CCVS, VD, HRVD or HOURS stops arriving; the others keep going. Requests for it are still answered. Also the **● ON / ○ OFF** pill on each card of the Signals tab. | Missing speed / odometer / engine hours |
+| **Broadcast off** (per PGN) | EEC1, CCVS, TCO1, VD, HRVD or HOURS stops arriving; the others keep going. Requests for it are still answered. Also the **● ON / ○ OFF** pill on each card of the Signals tab. | Missing speed / odometer / engine hours |
 | **SPN: not available / error** | `0xFF…` or `0xFE…` instead of the value, in broadcasts and replies alike. The card shows a red **SPN …: ERROR** chip. | Sensor missing or broken |
 | **Requests: Ignore** | No reply; the ELD must time out and retry. | Request retry logic |
 | **Requests: NACK** | A NACK (PGN 59392) even for a supported PGN. | Fallback when the ECU refuses |
 | **Requests: Delay** | The reply after the set delay (200 ms … 10 s), with the data current at that moment. | Timeouts, late VIN |
 | **Freeze odometer / engine hours** | The meter stops counting while the engine runs. | Driving with a stuck odometer |
 
-Requests faults apply to **All PGNs** or one PGN (VIN, VD, HRVD, HOURS, EEC1, CCVS, DM1, DM11). To make the odometer jump or run backwards use the ± buttons on the Signals tab; the VIN can be changed mid-trip on ECU & Vehicle.
+Requests faults apply to **All PGNs** or one PGN (VIN, VD, HRVD, HOURS, EEC1, CCVS, TCO1, DM1, DM11). To make the odometer jump or run backwards use the ± buttons on the Signals tab; the VIN can be changed mid-trip on ECU & Vehicle.
 
 While any fault is on, the Faults tab pill and the footer show how many; **ECU silent** also turns the top status amber (**ECU SILENT · FAULT INJECTED**) so it is not mistaken for a wiring problem. **Clear All Faults** puts everything back to normal.
 
@@ -309,7 +310,7 @@ Step actions (several may share one step):
 | `odometer_add_mi`, `engine_hours_add` | `odometer_add_mi = -10` | Jump a meter (negative = backwards) |
 | `vin` | `vin = "3AKJHHDR1LSLA4213"` | New VIN, broadcast at once |
 | `dtc` | `{ spn110_fmi3 = true, spn190_fmi0 = false }` | DM1 faults: `spn<SPN>_fmi<FMI>` of a DTC in the config (one that is not there is skipped and noted in the trace) |
-| `fault` | `{ silent = true }`, `{ ccvs = false }`, `{ spn84 = "not_available" }`, `{ requests = { mode = "delay", pgn = "vin", delay = "3s" } }`, `{ freeze_odometer = true }` | Everything on the Faults tab: `silent`; `eec1` / `ccvs` / `vd` / `hrvd` / `hours` broadcast on/off; `spn190` / `spn84` / `spn245` / `spn917` / `spn247` = `"normal"` / `"not_available"` / `"error"`; `requests` with `mode` = normal / ignore / nack / delay, `pgn` = number, `"vin"` or `"all"`, `delay`; `freeze_odometer`, `freeze_hours` |
+| `fault` | `{ silent = true }`, `{ ccvs = false }`, `{ spn84 = "not_available" }`, `{ requests = { mode = "delay", pgn = "vin", delay = "3s" } }`, `{ freeze_odometer = true }` | Everything on the Faults tab: `silent`; `eec1` / `ccvs` / `tco1` / `vd` / `hrvd` / `hours` broadcast on/off; `spn190` / `spn84` / `spn1624` / `spn245` / `spn917` / `spn247` = `"normal"` / `"not_available"` / `"error"`; `requests` with `mode` = normal / ignore / nack / delay, `pgn` = number, `"vin"` or `"all"`, `delay`; `freeze_odometer`, `freeze_hours` |
 | `clear_faults` | `true` | All faults back to normal |
 | `note` | `"…"` | A line in the trace and the step list |
 
@@ -383,7 +384,7 @@ eec1.spn190_rpm             set eec1.spn190_rpm 650
 ccvs.spn84_speed_mph        set ccvs.spn84_speed_mph 65
 vd.spn245_total_mi          set vd.spn245_total_mi 250000
 hours.spn247_engine_hours   set hours.spn247_engine_hours 12000
-eec1.cycle_ms, ccvs.cycle_ms, vd.cycle_ms, hours.cycle_ms
+eec1.cycle_ms, ccvs.cycle_ms, tco1.cycle_ms, vd.cycle_ms, hrvd.cycle_ms, hours.cycle_ms
 ```
 
 ---
@@ -439,6 +440,10 @@ spn190_rpm = 0
 enabled = true
 cycle_ms = 100
 spn84_speed_mph = 0
+
+[pgn.tco1]                     # sends the [pgn.ccvs] speed as tachograph speed
+enabled = true
+cycle_ms = 50
 
 [pgn.vd]
 enabled = true

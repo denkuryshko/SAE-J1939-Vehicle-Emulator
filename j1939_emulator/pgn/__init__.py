@@ -20,6 +20,7 @@ SPN_OVERRIDE_MODES = (SPN_NORMAL, SPN_NOT_AVAILABLE, SPN_ERROR)
 OVERRIDABLE_SPNS = {
     "spn190": (190, "eec1"),
     "spn84": (84, "ccvs"),
+    "spn1624": (1624, "tco1"),
     "spn245": (245, "vd"),
     "spn917": (917, "hrvd"),
     "spn247": (247, "hours"),
@@ -28,7 +29,7 @@ OVERRIDABLE_SPNS = {
 
 @dataclass
 class SignalState:
-    """Runtime SPN values for the broadcast PGNs (EEC1, CCVS, VD, HOURS)."""
+    """Runtime SPN values for the broadcast PGNs (EEC1, CCVS, TCO1, VD, HOURS)."""
 
     # Ignition: False = key ON, engine off. The ECU stays on the bus and answers requests, but
     # broadcasts 0 rpm / 0 mph and the meters stand still; the rpm / speed settings are kept for
@@ -42,6 +43,9 @@ class SignalState:
     # CCVS
     spn84_speed_mph: float = 0.0
     ccvs_enabled: bool = True
+
+    # TCO1: the same vehicle speed as CCVS (spn84_speed_mph), as tachograph speed SPN 1624
+    tco1_enabled: bool = True
 
     # VD
     spn245_total_mi: float = 248912.4
@@ -57,6 +61,7 @@ class SignalState:
     # Cycle times (ms) — configurable per PGN
     cycle_eec1_ms: int = 20
     cycle_ccvs_ms: int = 100
+    cycle_tco1_ms: int = 50
     cycle_vd_ms: int = 1000
     cycle_hrvd_ms: int = 1000
     cycle_hours_ms: int = 1000
@@ -167,6 +172,8 @@ class SignalState:
             "cycle_eec1_ms": "cycle_eec1_ms",
             "ccvs.cycle_ms": "cycle_ccvs_ms",
             "cycle_ccvs_ms": "cycle_ccvs_ms",
+            "tco1.cycle_ms": "cycle_tco1_ms",
+            "cycle_tco1_ms": "cycle_tco1_ms",
             "vd.cycle_ms": "cycle_vd_ms",
             "cycle_vd_ms": "cycle_vd_ms",
             "hrvd.cycle_ms": "cycle_hrvd_ms",
@@ -183,6 +190,7 @@ class SignalState:
 # CAN IDs (priority + PGN + SA 0x00)
 CAN_ID_EEC1 = 0x0CF00400
 CAN_ID_CCVS = 0x18FEF100
+CAN_ID_TCO1 = 0x0CFE6C00
 CAN_ID_VD = 0x18FEE000
 CAN_ID_HRVD = 0x18FEC100
 CAN_ID_HOURS = 0x18FEE500
@@ -231,6 +239,31 @@ def encode_ccvs(state: SignalState) -> bytes:
             0xFF,
             0xFF,
             0xFF,
+        ]
+    )
+
+
+def encode_tco1(state: SignalState) -> bytes:
+    """TCO1 PGN 65132 — SPN 1624 tachograph vehicle speed (bytes 7-8, 1/256 km/h) and
+    SPN 1611 vehicle motion (byte 1 bits 7-8); other SPNs not available."""
+    kmh = state.broadcast_speed_mph * KM_PER_MI
+    raw_speed = min(0xFAFF, max(0, round(kmh * 256)))
+    raw_speed = _override(state, "spn1624", raw_speed, 2)
+    # Motion follows the speed sent; not available (11) when the speed itself is not.
+    if raw_speed > 0xFAFF:
+        motion = 0b11
+    else:
+        motion = 0b01 if raw_speed > 0 else 0b00
+    return bytes(
+        [
+            0x3F | (motion << 6),  # driver 1 / driver 2 working state: not available
+            0xFF,
+            0xFF,
+            0xFF,
+            0xFF,  # bytes 5-6: SPN 1623 output shaft speed, not available
+            0xFF,
+            raw_speed & 0xFF,
+            (raw_speed >> 8) & 0xFF,
         ]
     )
 
@@ -299,6 +332,7 @@ def all_payloads(state: SignalState) -> dict[str, str]:
     return {
         "eec1": payload_hex(encode_eec1(state)),
         "ccvs": payload_hex(encode_ccvs(state)),
+        "tco1": payload_hex(encode_tco1(state)),
         "vd": payload_hex(encode_vd(state)),
         "hrvd": payload_hex(encode_hrvd(state)),
         "hours": payload_hex(encode_hours(state)),
