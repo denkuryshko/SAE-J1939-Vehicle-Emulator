@@ -6,13 +6,15 @@ cd /d "%~dp0"
 
 set "CONFIG=my_ecu.toml"
 set "VENV_PY=.venv\Scripts\python.exe"
+rem Written only after a successful install, so an interrupted first run is retried.
+set "MARKER=.venv\.installed"
 
 if not exist "%CONFIG%" (
     echo [error] Config "%CONFIG%" not found next to run_gui.bat.
     goto :fail
 )
 
-if exist "%VENV_PY%" goto :run
+if exist "%MARKER%" goto :run
 
 echo === First run: setting up Python environment ===
 set "PY="
@@ -35,6 +37,7 @@ if errorlevel 1 (
 "%VENV_PY%" -m pip install --upgrade pip || goto :fail
 rem candle = candleLight / CANable driver; base install already covers gs_usb and serial adapters.
 "%VENV_PY%" -m pip install -e . "python-can[candle]" || goto :fail
+type nul > "%MARKER%"
 echo.
 
 :run
