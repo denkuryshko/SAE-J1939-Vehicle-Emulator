@@ -133,7 +133,7 @@ def slider_spn(
         num.on_value_change(lambda e: apply(e.value))
 
         if presets:
-            with controls, ui.element("div").classes("preset-group font-mono"):
+            with controls, ui.element("div").classes("preset-group"):
                 for label, val in presets:
                     ui.button(label, on_click=lambda v=val: apply(v)).classes(
                         "preset-btn"
@@ -227,7 +227,7 @@ def pgn_header(
                 spn_fault_chip(sig, key)
             # Starts as "enabled" in the config; click to switch the broadcast while running.
             # Requests for the PGN are still answered (see the Faults tab for that).
-            state_btn = ui.label().classes("pgn-state pgn-toggle font-mono").tooltip(
+            state_btn = ui.label().classes("pgn-state pgn-toggle").tooltip(
                 "Cyclic broadcast on / off. Click to switch, also while running: off means the "
                 "ELD stops receiving this PGN. Requests for it are still answered."
             )
@@ -249,23 +249,21 @@ def pgn_header(
             paint_state()
             ui.timer(0.5, paint_state)
             details_btn = ui.button("Details", icon="expand_more").classes(
-                "details-btn font-mono"
+                "details-btn"
             ).props("flat dense no-caps")
 
     details = ui.element("div").classes("pgn-details")
     with details:
-        with ui.element("div").classes("pgn-details-row font-mono"):
+        with ui.element("div").classes("pgn-details-row"):
             with ui.row().classes("items-center gap-2"):
                 ui.label(f"PGN {pgn} (0x{pgn:06X})").classes("badge-subtle font-mono")
-                ui.label(f"CAN ID: 0x{can_id:08X}").classes("badge-subtle font-mono").style(
-                    "background:#F1F5F9;color:#5B6775;border-color:#CBD5E1;"
-                )
-            with ui.row().classes("items-center gap-2").style("font-size:11px;color:#5B6775;"):
+                ui.label(f"CAN ID: 0x{can_id:08X}").classes("badge-subtle badge-neutral font-mono")
+            with ui.row().classes("items-center gap-2 cycle-group"):
                 ui.label("Cycle:")
                 cycle_input = ui.number(value=cycle_ms, min=1, max=60000, step=1).props(
                     "dense outlined"
-                ).classes("compact-input").style("width:80px")
-                ui.label("ms").style("font-weight:700;color:#1F2A37;")
+                ).classes("compact-input cycle-input font-mono")
+                ui.label("ms").classes("unit")
 
                 def apply_cycle(e) -> None:
                     try:
@@ -289,13 +287,11 @@ def pgn_header(
 
 
 def payload_strip(priority: int, hex_text: str) -> Any:
-    with ui.element("div").classes("payload-strip font-mono"):
+    with ui.element("div").classes("payload-strip"):
         with ui.row().classes("items-center gap-2"):
             ui.label("CAN Payload:")
-            label = ui.label(hex_text).classes("signal-val").style(
-                "font-weight:700;color:#1F2A37;letter-spacing:0.04em;"
-            )
-        ui.label(f"DLC: 8 Bytes · Priority: {priority}").style("color:#64748B;")
+            label = ui.label(hex_text).classes("payload-hex font-mono")
+        ui.label(f"DLC: 8 Bytes · Priority: {priority}")
     return label
 
 
@@ -334,7 +330,7 @@ _SPN_FAULT_TEXT = {SPN_NOT_AVAILABLE: "NOT AVAILABLE", SPN_ERROR: "ERROR"}
 def spn_fault_chip(sig: SignalState, pgn_key: str) -> None:
     """Header chip while an SPN of this PGN sends 'not available' / 'error' (Faults tab)."""
     keys = [k for k, (_spn, p) in OVERRIDABLE_SPNS.items() if p == pgn_key]
-    chip = ui.label().classes("fault-chip font-mono").tooltip(
+    chip = ui.label().classes("fault-chip").tooltip(
         "Fault injection (Faults tab): this SPN does not send its real value"
     )
 
@@ -352,7 +348,7 @@ def spn_fault_chip(sig: SignalState, pgn_key: str) -> None:
 
 def engine_off_note(sig: SignalState, label: str, text: str) -> None:
     """Header chip shown while the key is ON with the engine off; the full text on hover."""
-    note = ui.label(label).classes("engine-off-chip font-mono").tooltip(text)
+    note = ui.label(label).classes("engine-off-chip").tooltip(text)
     note.set_visibility(not sig.engine_running)
     ui.timer(0.5, lambda: note.set_visibility(not sig.engine_running))
 
@@ -376,7 +372,7 @@ def build_ignition(sig: SignalState) -> None:
             "engine hours), but sends 0 rpm and 0 mph and the meters stand still. "
             "Switching sets Engine Speed to idle 650 rpm (engine running) or 0 rpm (key ON); "
             "setting Engine Speed to 0 rpm or to 600 rpm and above switches it back."
-        ).style("font-size:11px;color:#5B6775;padding:8px 12px;")
+        ).classes("ign-note")
 
         shown: list[bool | None] = [None]
 
@@ -619,49 +615,30 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
         else ""
     )
 
-    with ui.element("div").classes("card").style(
-        "display:flex;flex-direction:column;gap:16px;"
-    ):
-        with ui.row().classes("w-full items-center justify-between").style(
-            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
-        ):
+    with ui.element("div").classes("card pane"):
+        with ui.row().classes("w-full items-center justify-between pane-head"):
             with ui.column().classes("gap-0"):
-                ui.label(f"ECU & Vehicle Identity (Node {sa})").style(
-                    "font-size:14px;font-weight:700;text-transform:uppercase;"
-                )
+                ui.label(f"ECU & Vehicle Identity (Node {sa})").classes("pane-title")
                 ui.label(
                     "Single ECU node · SAE J1939-81 Network Management"
-                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
-            claim_chip = ui.element("span").classes("status-pill stopped font-mono").style(
-                "font-size:10px;"
-            )
+                ).classes("pane-sub")
+            claim_chip = ui.element("span").classes("status-pill stopped")
             with claim_chip:
                 ui.element("span").classes("status-dot")
                 claim_label = ui.label("NODE OFFLINE")
             refs["claim_chip"] = claim_chip
             refs["claim_label"] = claim_label
 
-        with ui.element("div").style(
-            "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:16px;"
-        ):
+        with ui.element("div").classes("ecu-grid"):
             with ui.column().classes("gap-3 items-stretch min-w-0"):
-                with ui.element("div").style(
-                    "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;"
-                    "padding:16px;text-align:center;"
-                ):
+                with ui.element("div").classes("subpanel truck-panel"):
                     ui.image("/assets/truck.svg").props("fit=contain no-spinner").style(
                         "width:100%;max-width:280px;height:160px;margin:0 auto;"
                         "mix-blend-mode:multiply;"
                     )
-                    ui.label(f"Heavy Duty Truck · Node {sa}").classes(
-                        "font-mono"
-                    ).style(
-                        "margin-top:8px;font-size:11px;font-weight:700;color:#1F2A37;"
-                    )
+                    ui.label(f"Heavy Duty Truck · Node {sa}").classes("truck-label")
 
-                with ui.element("div").style(
-                    "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
-                ):
+                with ui.element("div").classes("subpanel"):
                     ui.label("Vehicle Identification Number (VIN)").classes("field-label")
                     with ui.element("div").classes("vin-row"):
                         vin_input = (
@@ -670,18 +647,18 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                             .classes("vin-input font-mono")
                         )
                         btn_set_vin = ui.button("Set").classes(
-                            "action-btn btn-start font-mono"
+                            "action-btn btn-start"
                         ).props("unelevated dense")
                         btn_copy = ui.button("Copy").classes(
-                            "action-btn btn-restart font-mono"
+                            "action-btn btn-restart"
                         ).props("unelevated dense")
                         btn_generate = ui.button("Generate").classes(
-                            "action-btn btn-restart font-mono"
+                            "action-btn btn-restart"
                         ).props("unelevated dense")
                     ui.label(
-                        "Broadcast on START, when Set, and on Request "
+                        "Broadcast on Start, when Set, and on Request "
                         "(PGN 59904) — PGN 65260 via BAM."
-                    ).style("font-size:11px;color:#5B6775;margin-top:6px;")
+                    ).classes("text-sm-muted").style("margin-top:8px;")
                     refs["vin_input"] = vin_input
 
                     def on_vin_change(e=None) -> None:
@@ -723,16 +700,11 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                     ui.timer(0.5, follow_vin)
 
             with ui.column().classes("gap-3 items-stretch min-w-0"):
-                with ui.element("div").style(
-                    "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
-                ):
-                    ui.label("J1939-81 Network Address Parameters").style(
-                        "font-weight:700;font-size:11px;text-transform:uppercase;"
-                        "color:#1F2A37;margin-bottom:8px;"
+                with ui.element("div").classes("subpanel"):
+                    ui.label("J1939-81 Network Address Parameters").classes("section-caption").style(
+                        "margin-bottom:8px;"
                     )
-                    with ui.element("div").classes("font-mono").style(
-                        "display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;"
-                    ):
+                    with ui.element("div").classes("addr-grid"):
                         for key, label, value in (
                             ("sa", "Source Address (SA):", f"{sa}{sa_role}"),
                             ("industry", "Industry Group:", f"{identity.industry_group} ({industry})"),
@@ -742,24 +714,12 @@ def build_ecu_pane(session, refs: dict[str, Any]) -> None:
                             ("identity", "Identity Number:", str(identity.identity_number)),
                             ("bitrate", "Bitrate:", f"{session.bitrate // 1000} kbit/s"),
                         ):
-                            with ui.element("div").style(
-                                "background:#FFF;padding:6px;border:1px solid #CBD5E1;"
-                                "border-radius:3px;"
-                            ):
-                                ui.label(label).style(
-                                    "color:#5B6775;font-size:10px;display:block;"
-                                )
-                                refs[f"ecu_{key}"] = ui.label(value).style("font-weight:700;")
-                    with ui.element("div").classes("font-mono").style(
-                        "margin-top:8px;background:#FFF;padding:8px;"
-                        "border:1px solid #CBD5E1;border-radius:3px;"
-                    ):
-                        ui.label("64-Bit Device NAME:").style(
-                            "color:#5B6775;font-size:10px;display:block;"
-                        )
-                        ui.label(identity.name_hex).style(
-                            "font-weight:700;color:#1F6FEB;"
-                        )
+                            with ui.element("div").classes("addr-cell"):
+                                ui.label(label).classes("addr-label")
+                                refs[f"ecu_{key}"] = ui.label(value).classes("addr-value font-mono")
+                    with ui.element("div").classes("addr-cell").style("margin-top:8px;"):
+                        ui.label("64-Bit Device NAME:").classes("addr-label")
+                        ui.label(identity.name_hex).classes("addr-name-hex font-mono")
 
 
 _REQUEST_COLUMNS = [
@@ -957,26 +917,22 @@ def build_traffic_pane(session) -> Callable[[], None]:
     """
     ui.add_body_html(_TRAFFIC_JS)
     with ui.element("div").classes("card traffic-card"):
-        with ui.row().classes("w-full items-center justify-between").style(
-            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
-        ):
+        with ui.row().classes("w-full items-center justify-between pane-head"):
             with ui.column().classes("gap-0"):
-                ui.label("J1939 Traffic Monitor").style(
-                    "font-size:14px;font-weight:700;text-transform:uppercase;"
-                )
+                ui.label("J1939 Traffic Monitor").classes("pane-title")
                 ui.label(
                     f"Every frame sent and received, decoded from the bytes on the wire · "
                     f"last {TRAFFIC_ROWS} cyclic + last {TRAFFIC_ROWS} other frames"
-                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+                ).classes("pane-sub")
             with ui.row().classes("items-center gap-2"):
-                status = ui.label("● LIVE").classes("traffic-status live font-mono")
-                btn_pause = ui.button("Pause").classes("action-btn btn-restart font-mono").props(
+                status = ui.label("● LIVE").classes("traffic-status live")
+                btn_pause = ui.button("Pause").classes("action-btn btn-restart").props(
                     "unelevated dense"
                 )
-                btn_clear = ui.button("Clear").classes("action-btn btn-restart font-mono").props(
+                btn_clear = ui.button("Clear").classes("action-btn btn-restart").props(
                     "unelevated dense"
                 )
-                btn_export = ui.button("Export").classes("action-btn btn-restart font-mono").props(
+                btn_export = ui.button("Export").classes("action-btn btn-restart").props(
                     "unelevated dense"
                 ).tooltip(
                     "Save the frames in memory as a candump log (all frames, filter not applied): "
@@ -985,7 +941,7 @@ def build_traffic_pane(session) -> Callable[[], None]:
         head = "".join(f"<th>{c}</th>" for c in _TRAFFIC_COLUMNS)
         tid = _TRAFFIC_ID
         ui.html(
-            f'<div class="traffic-filter font-mono">'
+            f'<div class="traffic-filter">'
             f'<input id="{tid}-q" class="traffic-q" type="search" spellcheck="false" '
             f'placeholder="Filter: 65260   sa:F9   type:request   -tp.dt" title="{_FILTER_HELP}" '
             f"oninput=\"j1939Traffic.filter('{tid}')\">"
@@ -997,9 +953,9 @@ def build_traffic_pane(session) -> Callable[[], None]:
             f'<div id="{tid}" class="traffic-wrap">'
             f'<table class="traffic-table"><thead><tr>{head}</tr></thead><tbody></tbody></table>'
             f'<div id="{tid}-empty" class="traffic-empty">'
-            f"No traffic yet. Press START to see the frames on the bus.</div>"
+            f"No traffic yet. Press Start to see the frames on the bus.</div>"
             f"</div>"
-            f'<button id="{tid}-new" class="traffic-new font-mono" style="display:none" '
+            f'<button id="{tid}-new" class="traffic-new" style="display:none" '
             f"onclick=\"j1939Traffic.bottom('{tid}')\">&darr; New messages</button>"
             f"</div>",
             sanitize=False,
@@ -1074,24 +1030,18 @@ def build_traffic_pane(session) -> Callable[[], None]:
 def build_logs_pane(session, refs: dict[str, Any]) -> None:
     """Logs panel (always visible): incoming requests and the J1939 trace, for ELD bench debugging."""
     with ui.element("div").classes("card logs-panel"):
-        with ui.column().classes("gap-0").style(
-            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
-        ):
+        with ui.column().classes("gap-0 pane-head"):
             with ui.row().classes("w-full items-center gap-2"):
-                ui.label("Logs").style(
-                    "font-size:14px;font-weight:700;text-transform:uppercase;"
-                )
-                refs["logs_pill"] = ui.label("0 Requests").classes("tab-pill font-mono").style(
-                    "margin-left:0;"
-                )
+                ui.label("Logs").classes("pane-title")
+                refs["logs_pill"] = ui.label("0 Requests").classes("tab-pill logs-pill")
                 ui.space()
-                paused = ui.label("PAUSED").classes("logs-paused font-mono")
+                paused = ui.label("PAUSED").classes("logs-paused")
                 live = ui.switch("Live", value=True).props("dense color=positive").classes(
-                    "logs-live font-mono"
+                    "logs-live"
                 )
             ui.label(
                 "Requests from other nodes and a decoded J1939 trace of each run"
-            ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+            ).classes("pane-sub")
         # Pausing only freezes this panel; the trace file keeps recording, and the panel
         # catches up with what it missed when monitoring is switched back on.
         monitor = {"on": True}
@@ -1108,25 +1058,21 @@ def build_logs_pane(session, refs: dict[str, Any]) -> None:
 
 def build_request_log(session, monitor: dict[str, bool]) -> None:
     """Requests (PGN 59904) from other nodes, e.g. an ELD asking for the VIN."""
-    with ui.element("div").style(
-        "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
-    ):
+    with ui.element("div").classes("subpanel"):
         with ui.row().classes("w-full items-center justify-between"):
             with ui.column().classes("gap-0"):
-                ui.label("Incoming Requests (PGN 59904)").style(
-                    "font-weight:700;font-size:11px;text-transform:uppercase;color:#1F2A37;"
-                )
+                ui.label("Incoming Requests (PGN 59904)").classes("section-caption")
                 ui.label(
                     "Last 50 requests from other nodes and how this ECU answered, newest first."
-                ).style("font-size:11px;color:#5B6775;")
+                ).classes("text-sm-muted")
             btn_clear = ui.button("Clear").classes(
-                "action-btn btn-restart font-mono"
+                "action-btn btn-restart"
             ).props("unelevated dense")
         table = ui.table(columns=_REQUEST_COLUMNS, rows=[], row_key="id").props(
             "dense flat bordered hide-bottom"
-        ).classes("w-full font-mono").style("font-size:11px;margin-top:8px;")
-        empty = ui.label("No requests received yet.").classes("font-mono").style(
-            "font-size:11px;color:#5B6775;margin-top:6px;"
+        ).classes("w-full font-mono").style("font-size:12px;margin-top:8px;")
+        empty = ui.label("No requests received yet.").classes("text-sm-muted").style(
+            "margin-top:8px;"
         )
 
     shown: list[dict[str, Any]] = []
@@ -1154,23 +1100,19 @@ def build_request_log(session, monitor: dict[str, bool]) -> None:
 
 def build_trace_view(session, monitor: dict[str, bool]) -> None:
     """Live J1939 trace (also written to a file per START) for debugging an ELD on the bench."""
-    with ui.element("div").style(
-        "background:#F8FAFC;border:1px solid #CBD5E1;border-radius:3px;padding:12px;"
-    ):
+    with ui.element("div").classes("subpanel"):
         with ui.row().classes("w-full items-center justify-between"):
             with ui.column().classes("gap-0"):
-                ui.label("J1939 Trace").style(
-                    "font-weight:700;font-size:11px;text-transform:uppercase;color:#1F2A37;"
-                )
-                path_label = ui.label("Starts with START: requests, transport frames (BAM / RTS / CTS / "
+                ui.label("J1939 Trace").classes("section-caption")
+                path_label = ui.label("Starts with Start: requests, transport frames (BAM / RTS / CTS / "
                                       "EOMA / Abort), replies, send and bus errors.").classes(
-                    "font-mono"
-                ).style("font-size:11px;color:#5B6775;word-break:break-all;")
+                    "text-sm-muted"
+                ).style("overflow-wrap:anywhere;")
             btn_download = ui.button("Download").classes(
-                "action-btn btn-restart font-mono"
+                "action-btn btn-restart"
             ).props("unelevated dense")
         log = ui.log(max_lines=500).classes("trace-log w-full font-mono").style(
-            "font-size:11px;margin-top:8px;background:#FFF;white-space:pre;"
+            "font-size:12px;margin-top:8px;background:var(--surface);white-space:pre;"
         )
 
     view = {"trace": None, "count": 0}
@@ -1204,12 +1146,6 @@ def build_trace_view(session, monitor: dict[str, bool]) -> None:
     ui.timer(0.5, refresh)
 
 
-_LAMP_BADGE_STYLE = {
-    "red": "background:#FEF2F2;color:#991B1B;border-color:#FCA5A5;",
-    "amber": "background:#FFFBEB;color:#B45309;border-color:#FDE68A;",
-}
-
-
 def _lamp_tone(lamp: str) -> str:
     """Card colour: red stop is red, every other lamp amber."""
     return "red" if lamp == "red" else "amber"
@@ -1219,34 +1155,25 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
     """Diagnostics tab — the configured DTCs on DM1; DM11 from the ELD clears them."""
     diag = session.diagnostics
 
-    with ui.element("div").classes("card").style(
-        "display:flex;flex-direction:column;gap:14px;"
-    ):
-        with ui.row().classes("w-full items-center justify-between").style(
-            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
-        ):
+    with ui.element("div").classes("card pane"):
+        with ui.row().classes("w-full items-center justify-between pane-head"):
             with ui.column().classes("gap-0"):
-                ui.label("Diagnostics & Active Fault Codes (DM1)").style(
-                    "font-size:14px;font-weight:700;text-transform:uppercase;"
-                )
+                ui.label("Diagnostics & Active Fault Codes (DM1)").classes("pane-title")
                 ui.label(
                     "SAE J1939-73 Diagnostic Trouble Code (DTC) Fault Injection & Lamp Status"
-                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+                ).classes("pane-sub")
             with ui.row().classes("gap-2"):
                 btn_clear = ui.button("Clear All").classes(
-                    "action-btn btn-restart font-mono"
+                    "action-btn btn-restart"
                 ).props("unelevated dense")
                 btn_inject = ui.button("Inject All").classes(
-                    "action-btn btn-restart font-mono"
+                    "action-btn btn-restart"
                 ).props("unelevated dense")
 
-        dm1_alert = ui.element("div").classes("font-mono").style(
-            "display:none;background:#FFFBEB;border:1px solid #FDE68A;border-radius:3px;"
-            "padding:10px;font-size:11px;color:#92400E;"
-        )
+        dm1_alert = ui.element("div").classes("dm1-alert")
         with dm1_alert:
-            ui.label("PGN 65226 (DM1) Active Diagnostic Message Broadcast").style(
-                "font-weight:700;"
+            ui.label("PGN 65226 (DM1) Active Diagnostic Message Broadcast").classes(
+                "dm1-alert-title"
             )
             ui.label(
                 "CAN ID: 0x18FECA00 · Priority: 6 · Rate: 1000 ms. "
@@ -1263,29 +1190,17 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
                     with ui.row().classes("w-full items-center justify-between").style(
                         "margin-bottom:8px;"
                     ):
-                        ui.label(dtc.label).classes("badge-subtle font-mono").style(
-                            _LAMP_BADGE_STYLE[tone]
-                        )
-                        badge = ui.label("INACTIVE").classes("tab-pill font-mono")
-                    ui.label(dtc.name or dtc.label).style(
-                        "font-weight:700;font-size:13px;color:#1F2A37;"
-                    )
+                        ui.label(dtc.label).classes(f"badge-subtle lamp-badge {tone} font-mono")
+                        badge = ui.label("INACTIVE").classes("tab-pill")
+                    ui.label(dtc.name or dtc.label).classes("dtc-name")
                     if dtc.description:
-                        ui.label(dtc.description).style(
-                            "font-size:11px;color:#5B6775;margin-top:4px;"
-                        )
-                    with ui.row().classes("w-full items-center justify-between").style(
-                        "border-top:1px solid #CBD5E1;padding-top:8px;"
-                    ):
+                        ui.label(dtc.description).classes("text-sm-muted").style("margin-top:4px;")
+                    with ui.row().classes("w-full items-center justify-between").classes("dtc-foot"):
                         with ui.column().classes("gap-0"):
-                            ui.label(f"Lamp: {LAMP_LABELS[dtc.lamp]}").classes("font-mono").style(
-                                "font-size:11px;color:#5B6775;"
-                            )
-                            oc_label = ui.label().classes("font-mono").style(
-                                "font-size:11px;color:#5B6775;"
-                            )
+                            ui.label(f"Lamp: {LAMP_LABELS[dtc.lamp]}").classes("text-sm-muted")
+                            oc_label = ui.label().classes("text-sm-muted")
                         btn = ui.button("Inject Fault").classes(
-                            "action-btn btn-restart font-mono"
+                            "action-btn btn-restart"
                         ).props("unelevated dense")
                 btn.on_click(lambda d=dtc: (session.set_dtc(d.key, not d.active), refresh_dtc_ui()))
                 cards.append((dtc, card, badge, oc_label, btn))
@@ -1294,7 +1209,7 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
             "DM11 (PGN 65235): a Request from the ELD clears all active DTCs here and on DM1; "
             "a request sent to this ECU gets an ACK. To refuse it, NACK requests for DM11 on "
             "the Faults tab."
-        ).style("font-size:11px;color:#5B6775;")
+        ).classes("text-sm-muted")
 
         shown: list[Any] = [None]
 
@@ -1302,8 +1217,7 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
             shown[0] = [(d.active, d.oc) for d in diag.dtcs]
             c = diag.active_count
             dm1_alert.style(
-                "display:block;background:#FFFBEB;border:1px solid #FDE68A;"
-                "border-radius:3px;padding:10px;font-size:11px;color:#92400E;"
+                "display:block;"
                 if c > 0
                 else "display:none;"
             )
@@ -1325,10 +1239,10 @@ def build_diagnostics_pane(session, refs: dict[str, Any]) -> None:
             if foot is not None:
                 if c > 0:
                     foot.set_text(f"Active Faults: {c} DTCs")
-                    foot.style("color:#B45309")
+                    foot.classes(add="warn")
                 else:
                     foot.set_text("Active Faults: 0 DTCs")
-                    foot.style("color:#1F9D55")
+                    foot.classes(remove="warn")
 
         def follow() -> None:
             """DM11 from the ELD, scenarios and the CLI change DTCs off the UI thread."""
@@ -1405,23 +1319,19 @@ def build_faults_pane(session, refs: dict[str, Any]) -> None:
 
         syncers.append(sync)
 
-    with ui.element("div").classes("card").style("display:flex;flex-direction:column;gap:14px;"):
-        with ui.row().classes("w-full items-center justify-between").style(
-            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
-        ):
+    with ui.element("div").classes("card pane"):
+        with ui.row().classes("w-full items-center justify-between pane-head"):
             with ui.column().classes("gap-0"):
-                ui.label("Fault Injection").style(
-                    "font-size:14px;font-weight:700;text-transform:uppercase;"
-                )
+                ui.label("Fault Injection").classes("pane-title")
                 ui.label(
                     "Make the ECU misbehave on purpose and watch how the ELD reacts. Runtime only: "
                     "nothing is saved, every change is noted in the J1939 trace."
-                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+                ).classes("pane-sub")
             btn_clear = ui.button("Clear All Faults").classes(
-                "action-btn btn-restart font-mono"
+                "action-btn btn-restart"
             ).props("unelevated dense")
 
-        summary = ui.element("div").classes("fault-summary font-mono")
+        summary = ui.element("div").classes("fault-summary")
         with summary:
             summary_title = ui.label().classes("fault-summary-title")
             summary_list = ui.column().classes("gap-0")
@@ -1435,7 +1345,7 @@ def build_faults_pane(session, refs: dict[str, Any]) -> None:
                 "as ignored.",
             ):
                 sw_silent = ui.switch("ECU silent").props("dense color=negative").classes(
-                    "font-mono fault-switch"
+                    "fault-switch"
                 )
                 bind(sw_silent, lambda: faults.silent, session.set_silent)
 
@@ -1447,11 +1357,11 @@ def build_faults_pane(session, refs: dict[str, Any]) -> None:
             ):
                 with ui.row().classes("gap-6"):
                     sw_odo = ui.switch("Freeze odometer").props("dense color=warning").classes(
-                        "font-mono fault-switch"
+                        "fault-switch"
                     )
                     sw_hours = ui.switch("Freeze engine hours").props(
                         "dense color=warning"
-                    ).classes("font-mono fault-switch")
+                    ).classes("fault-switch")
                 bind(sw_odo, lambda: sig.freeze_odometer, lambda v: session.set_freeze(odometer=v))
                 bind(sw_hours, lambda: sig.freeze_hours, lambda v: session.set_freeze(hours=v))
 
@@ -1461,12 +1371,12 @@ def build_faults_pane(session, refs: dict[str, Any]) -> None:
                 "'not available' or 'error' instead of its value: a missing or broken sensor. "
                 "Overrides apply to broadcasts and to replies on request alike.",
             ).classes("fault-wide"):
-                with ui.element("div").classes("fault-pgn-table font-mono"):
+                with ui.element("div").classes("fault-pgn-table"):
                     for pgn_key, (acronym, pgn) in BROADCAST_PGNS.items():
                         spn_key = next(k for k, (_s, p) in OVERRIDABLE_SPNS.items() if p == pgn_key)
                         spn = OVERRIDABLE_SPNS[spn_key][0]
                         ui.label(acronym).classes("badge-acronym font-mono").style("justify-self:start;")
-                        ui.label(f"PGN {pgn}").classes("fault-cell-muted")
+                        ui.label(f"PGN {pgn}").classes("fault-cell-muted font-mono")
                         sw = ui.switch("Broadcast").props("dense color=positive")
                         bind(
                             sw,
@@ -1509,7 +1419,7 @@ def build_faults_pane(session, refs: dict[str, Any]) -> None:
                         ).props("dense outlined").classes("compact-input font-mono").style(
                             "width:110px"
                         )
-                    with ui.element("div").classes("preset-group font-mono"):
+                    with ui.element("div").classes("preset-group"):
                         for ms in (200, 1000, 3000):
                             ui.button(f"{ms} ms", on_click=lambda m=ms: session.set_request_fault(
                                 "delay", delay_ms=m
@@ -1577,17 +1487,15 @@ def build_scenarios_pane(session, runner: ScenarioRunner, refs: dict[str, Any]) 
     sig = session.signals
     view: dict[str, Any] = {"scenario": None, "rows": [], "painted": None}
 
-    with ui.element("div").classes("card").style("display:flex;flex-direction:column;gap:12px;"):
-        with ui.row().classes("w-full items-center justify-between").style(
-            "border-bottom:1px solid #CBD5E1;padding-bottom:8px;"
-        ):
+    with ui.element("div").classes("card pane"):
+        with ui.row().classes("w-full items-center justify-between pane-head"):
             with ui.column().classes("gap-0"):
-                ui.label("Scenarios").style("font-size:14px;font-weight:700;text-transform:uppercase;")
+                ui.label("Scenarios").classes("pane-title")
                 ui.label(
                     "Timed test sequences the emulator plays by itself: driving with smooth "
                     "acceleration, faults, VIN changes. Real time; every step is written to the "
                     "J1939 trace."
-                ).classes("font-mono").style("font-size:11px;color:#5B6775;")
+                ).classes("pane-sub")
 
         with ui.row().classes("w-full items-end gap-3 flex-wrap"):
             with ui.column().classes("gap-0").style("flex:1 1 320px;min-width:0;"):
@@ -1602,35 +1510,33 @@ def build_scenarios_pane(session, runner: ScenarioRunner, refs: dict[str, Any]) 
                 "scenario-upload"
             )
             btn_add.on_click(lambda: upload.run_method("pickFiles"))
-        ui.label(f"Your own scenarios go in: {user_dir()}").classes("font-mono").style(
-            "font-size:10px;color:#94A3B8;word-break:break-all;margin-top:-6px;"
-        )
+        ui.label(f"Your own scenarios go in: {user_dir()}").classes("scenario-dir")
 
         info = ui.element("div").classes("scenario-info")
         with info:
             info_title = ui.label().classes("scenario-title")
             info_desc = ui.label().classes("scenario-desc")
-            info_meta = ui.label().classes("scenario-meta font-mono")
-        error_box = ui.label().classes("scenario-error font-mono")
+            info_meta = ui.label().classes("scenario-meta")
+        error_box = ui.label().classes("scenario-error")
         error_box.set_visibility(False)
 
         with ui.element("div").classes("scenario-controls"):
             btn_run = ui.button("Run", icon="play_arrow").classes(
-                "action-btn btn-start font-mono"
+                "action-btn btn-start"
             ).props("unelevated dense")
             btn_pause = ui.button("Pause", icon="pause").classes(
-                "action-btn btn-restart font-mono"
+                "action-btn btn-restart"
             ).props("unelevated dense")
             btn_stop = ui.button("Stop", icon="stop").classes(
-                "action-btn btn-restart font-mono"
+                "action-btn btn-restart"
             ).props("unelevated dense")
-            state_pill = ui.label("READY").classes("scenario-state idle font-mono")
+            state_pill = ui.label("READY").classes("scenario-state idle")
             clock = ui.label("0:00 / 0:00").classes("scenario-clock font-mono")
             live = ui.label().classes("scenario-live font-mono")
         progress = ui.linear_progress(value=0, show_value=False, size="6px").props(
             "color=primary track-color=grey-3 instant-feedback"
         )
-        steps_box = ui.element("div").classes("scenario-steps font-mono")
+        steps_box = ui.element("div").classes("scenario-steps")
 
     def options() -> dict[str, str]:
         return {str(path): label for label, path in list_scenarios()}
