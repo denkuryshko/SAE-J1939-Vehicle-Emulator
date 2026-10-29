@@ -175,6 +175,8 @@ python -m j1939_emulator --gui --config my_ecu.toml
 
 Double-click `run_gui.bat` (or put a shortcut to it on the desktop). It opens the GUI with `my_ecu.toml`. On the first run, when there is no `.venv` yet, it finds Python 3.11+, creates `.venv` and installs everything including the candleLight driver, which takes about a minute. Keep the console window open while you work and stop with **QUIT** in the GUI, so meters are saved and the adapter is released.
 
+`run_gui_no_console.bat` starts the same GUI without a console window (after the first run; before that it falls back to `run_gui.bat` for the setup). Its output, startup errors included, goes to `%APPDATA%\j1939-emulator\gui.log`. Stop it with **QUIT** in the GUI.
+
 Other options: `--host` / `--port` to change the address, `--no-browser` to skip auto-open. You can also change **Host** / **Port** in the top bar and click **Apply** (the UI restarts). **QUIT** stops the server.
 
 ### Workflow

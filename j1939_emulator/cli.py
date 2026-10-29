@@ -18,7 +18,7 @@ from j1939_emulator.bus.detect import (
 from j1939_emulator.bus.session import EmulatorSession
 from j1939_emulator.config import IGNITION_VALUES, load_config
 from j1939_emulator.ecu_identity import vin_check_digit_warning
-from j1939_emulator.meters_store import restore_meters
+from j1939_emulator.meters_store import restore_meters, state_file
 from j1939_emulator.pgn import all_payloads
 from j1939_emulator.scenario import (
     RunState,
@@ -38,6 +38,23 @@ def _quiet_third_party_noise() -> None:
         message=".*doesn't match a supported version.*",
         module="requests",
     )
+
+
+GUI_LOG_NAME = "gui.log"
+
+
+def _log_to_file_without_console() -> None:
+    """Under pythonw (run_gui_no_console.bat) there is no stdout/stderr: write them to gui.log."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    path = state_file().parent / GUI_LOG_NAME
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        log = open(path, "w", encoding="utf-8", buffering=1)
+    except OSError:
+        return
+    sys.stdout = sys.stdout or log
+    sys.stderr = sys.stderr or log
 
 
 def format_channel_table(
@@ -209,6 +226,7 @@ def _scenario_command(runner: ScenarioRunner, rest: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _log_to_file_without_console()
     _quiet_third_party_noise()
     parser = build_parser()
     args = parser.parse_args(argv)
