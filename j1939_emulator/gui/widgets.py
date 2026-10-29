@@ -360,19 +360,21 @@ def build_ignition(sig: SignalState) -> None:
             with ui.element("div").classes("pgn-title-group"):
                 ui.label("KEY").classes("badge-acronym font-mono")
                 ui.label("Ignition").classes("pgn-name")
+                ui.icon("info_outline").classes("sig-hint").tooltip(
+                    "Key ON, engine off: the ECU stays on the bus and answers requests (VIN, "
+                    "odometer, engine hours), but sends 0 rpm and 0 mph and the meters stand "
+                    "still. Switching sets Engine Speed to idle 650 rpm (engine running) or 0 rpm "
+                    "(key ON); setting Engine Speed to 0 rpm or to 600 rpm and above switches it "
+                    "back."
+                )
+            # Segmented switch in neutral colours; green only while the ECU runs (see CSS).
             with ui.element("div").classes("ign-switch"):
-                btn_on = ui.button("Key ON · engine off", icon="vpn_key", color=None).classes(
+                btn_on = ui.button("Key ON", icon="vpn_key", color=None).classes(
                     "ign-btn"
                 ).props("flat no-caps")
                 btn_run = ui.button("Engine running", icon="play_circle", color=None).classes(
                     "ign-btn"
                 ).props("flat no-caps")
-        ui.label(
-            "Key ON, engine off: the ECU stays on the bus and answers requests (VIN, odometer, "
-            "engine hours), but sends 0 rpm and 0 mph and the meters stand still. "
-            "Switching sets Engine Speed to idle 650 rpm (engine running) or 0 rpm (key ON); "
-            "setting Engine Speed to 0 rpm or to 600 rpm and above switches it back."
-        ).classes("ign-note")
 
         shown: list[bool | None] = [None]
 

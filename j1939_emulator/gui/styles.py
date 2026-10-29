@@ -69,7 +69,7 @@ body, .nicegui-content {
 .q-btn { text-transform: none; letter-spacing: normal; font-family: var(--font-ui); }
 .q-field--outlined .q-field__control { border-radius: var(--radius); }
 .q-field--outlined .q-field__control:before { border-color: var(--border-strong); }
-.q-tooltip { font-size: var(--fs-12); border-radius: var(--radius); }
+.q-tooltip { font-size: var(--fs-12); border-radius: var(--radius); max-width: 360px; }
 
 /* Shared building blocks */
 .pane { display: flex; flex-direction: column; gap: var(--sp-16); }
@@ -315,19 +315,35 @@ body, .nicegui-content {
   display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-12); flex-wrap: wrap; gap: var(--sp-8);
 }
 .payload-hex { font-weight: 600; color: var(--text); letter-spacing: 0.04em; }
-/* Ignition: two-position switch, amber = key ON / engine off, green = engine running */
+/* Ignition: segmented switch in neutral colours; "Engine running" turns green only while the ECU runs */
 .ign-switch {
-  display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden;
-  background: var(--surface);
+  display: inline-flex; gap: var(--sp-4); padding: 3px; border-radius: var(--radius);
+  background: var(--bg); border: 1px solid var(--border);
 }
 .ign-switch .ign-btn {
-  font-size: var(--fs-13); font-weight: 600; padding: var(--sp-8) var(--sp-16); border-radius: 0;
-  color: var(--text-muted) !important; background: var(--surface);
+  font-size: var(--fs-13); font-weight: 500; padding: var(--sp-4) var(--sp-12); min-height: 30px;
+  border-radius: 4px; color: var(--text-muted) !important; background: transparent;
 }
-.ign-switch .ign-btn + .ign-btn { border-left: 1px solid var(--border-strong); }
-.ign-switch .ign-btn.active-on { background: var(--warn) !important; color: var(--surface) !important; }
-.ign-switch .ign-btn.active-run { background: var(--ok) !important; color: var(--surface) !important; }
-.ign-note { font-size: var(--fs-12); color: var(--text-muted); padding: var(--sp-8) var(--sp-12); }
+.ign-switch .ign-btn.active-on, .ign-switch .ign-btn.active-run {
+  background: var(--surface) !important; color: var(--text) !important; font-weight: 600;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 0 0 1px var(--border-strong);
+}
+.signals-pane:not(.ecu-stopped) .ign-switch .ign-btn.active-run {
+  background: var(--ok) !important; color: var(--surface) !important; box-shadow: none;
+}
+
+/* ECU stopped: the signal cards fade (still editable) under a banner with Start */
+.signals-pane.ecu-stopped .pgn-card { opacity: 0.6; transition: opacity 0.15s; }
+.signals-pane.ecu-stopped .pgn-card:hover,
+.signals-pane.ecu-stopped .pgn-card:focus-within { opacity: 1; }
+.stopped-banner {
+  display: flex; align-items: center; gap: var(--sp-12); margin-bottom: var(--sp-8);
+  padding: var(--sp-8) var(--sp-12); border-radius: var(--radius); font-size: var(--fs-13);
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--text-subtle);
+}
+.stopped-banner > .q-icon { color: var(--text-muted); font-size: var(--fs-20); }
+.stopped-banner-text { flex: 1 1 auto; min-width: 0; }
 
 .signal-box { padding: var(--sp-4) var(--sp-12); }
 /* Same column grid in every signal row so cards line up: SPN | name | value | controls */

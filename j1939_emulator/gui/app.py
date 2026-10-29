@@ -380,7 +380,7 @@ def _build_page(state: GuiState) -> None:
                             ui.label("Scenarios")
                             scen_tab_pill = ui.label("").classes("tab-pill")
 
-                    pane_signals = ui.element("section")
+                    pane_signals = ui.element("section").classes("signals-pane ecu-stopped")
                     with pane_signals:
                         with ui.row().classes("w-full items-center justify-between").style(
                             "margin-bottom:12px;"
@@ -394,6 +394,16 @@ def _build_page(state: GuiState) -> None:
                             ui.icon("play_circle").style("font-size:16px;")
                             scen_banner_text = ui.label()
                         scen_banner.set_visibility(False)
+
+                        stopped_banner = ui.element("div").classes("stopped-banner")
+                        with stopped_banner:
+                            ui.icon("pause_circle_outline")
+                            ui.label(
+                                "ECU stopped — values are not broadcast. You can still edit them."
+                            ).classes("stopped-banner-text")
+                            ui.button(
+                                "Start", icon="play_arrow", on_click=lambda: do_start(), color=None
+                            ).classes("action-btn btn-start").props("flat dense")
 
                         state.payload_labels.clear()
                         sig.clear_listeners()
@@ -694,6 +704,10 @@ def _build_page(state: GuiState) -> None:
             scen_tab_pill.set_visibility(False)
         foot_scen.set_visibility(runner.active)
         scen_banner.set_visibility(runner.active)
+        stopped_banner.set_visibility(not st.running)
+        pane_signals.classes(
+            remove="ecu-stopped", add="" if st.running else "ecu-stopped"
+        )
         if st.running and session.faults.silent:
             # Silent is on purpose: say so instead of a bus-health state (nothing is sent).
             top_pill.classes(remove="stopped running error", add="warn")
