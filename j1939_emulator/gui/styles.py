@@ -21,11 +21,7 @@ body, .nicegui-content {
 .brand-section {
   display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto;
 }
-.brand-icon {
-  width: 28px; height: 28px; background: #1F6FEB; color: white; border-radius: 3px;
-  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px;
-  flex-shrink: 0;
-}
+.brand-icon { width: 32px; height: 32px; flex-shrink: 0; }
 .brand-title {
   font-weight: 800; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase;
   color: #1F2A37; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;

@@ -189,6 +189,7 @@ def run_gui(
         host=host,
         port=port,
         title="SAE J1939 Vehicle Emulator",
+        favicon=Path(__file__).parent / "assets" / "brand-icon.svg",
         reload=False,
         show=False,
     )
@@ -249,9 +250,8 @@ def _build_page(state: GuiState) -> None:
     with ui.element("div").classes("j1939-root"):
         with ui.element("header").classes("topbar"):
             with ui.element("div").classes("brand-section"):
-                ui.label("J").classes("brand-icon")
+                ui.image("/assets/brand-icon.svg").classes("brand-icon")
                 ui.label("SAE J1939 Vehicle Emulator").classes("brand-title")
-                ui.label(f"v{__version__}").classes("badge-subtle font-mono")
             with ui.element("div").classes("topbar-controls"):
                 top_pill = ui.element("span").classes("status-pill status-hero stopped font-mono")
                 with top_pill:
