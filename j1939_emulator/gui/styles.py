@@ -128,24 +128,30 @@ body, .nicegui-content {
 .status-pill.error { background: var(--danger-soft); color: var(--danger-text); border: 1px solid var(--danger-line); }
 .status-pill.error .status-dot { background: var(--danger); }
 
-/* Top-bar ECU state: the first thing to read on the bench */
-.status-pill.status-hero {
-  font-size: var(--fs-13); padding: var(--sp-8) var(--sp-16); gap: var(--sp-8); border-width: 2px;
+/* The one ECU state indicator, next to Start / Stop / Reset: the first thing to read on the bench */
+.status-pill.ecu-state {
+  height: 32px; font-size: var(--fs-13); padding: 0 var(--sp-12); min-width: 112px; justify-content: center;
 }
-.status-hero .status-dot { width: 10px; height: 10px; }
-.status-hero.stopped { background: var(--bg); color: var(--text-muted); border-color: var(--border-strong); }
-.status-hero.running { background: var(--ok); color: var(--surface); border-color: var(--ok); }
-.status-hero.running .status-dot { background: var(--surface); animation: status-pulse 1.4s ease-in-out infinite; }
-.status-hero.warn { background: var(--warn); color: var(--surface); border-color: var(--warn); }
-.status-hero.warn .status-dot { background: var(--surface); }
-.status-hero.error { background: var(--danger); color: var(--surface); border-color: var(--danger); }
-.status-hero.error .status-dot { background: var(--surface); }
+.ecu-state .status-dot { width: 10px; height: 10px; }
+.ecu-state.running .status-dot { animation: status-pulse 1.4s ease-in-out infinite; }
 @keyframes status-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-.listen-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4) var(--sp-8); }
-.listen-group .field-label { margin: 0; }
-.host-input { width: 120px; }
-.port-input { width: 88px; }
+/* Top bar: where the web UI listens (details in Settings) */
+.listen-badge {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 var(--sp-8);
+  font-size: var(--fs-12); border-radius: var(--radius);
+  background: var(--ok-soft); color: var(--ok-text); border: 1px solid var(--ok-line);
+}
+.icon-btn { color: var(--text-muted) !important; }
+.icon-btn:hover { color: var(--text) !important; }
+.settings-card {
+  min-width: min(400px, 92vw); padding: var(--sp-24) !important; gap: var(--sp-16) !important;
+  border-radius: var(--radius) !important;
+}
+.settings-fields { display: flex; flex-wrap: wrap; gap: var(--sp-12); }
+.settings-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); width: 100%; }
+.host-input { width: 200px; }
+.port-input { width: 112px; }
 
 .j1939-main {
   flex: 1; max-width: 2200px; width: 100%; margin: 0 auto; padding: var(--sp-16);
@@ -185,14 +191,21 @@ body, .nicegui-content {
 .bus-field { flex: 0 1 auto; min-width: 0; }
 .bus-select { width: 220px; max-width: 100%; }
 .bus-field-wide .bus-select { width: 260px; }
-.run-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); }
+.bus-select.is-hint .q-field__native span { color: var(--text-subtle); }
+/* Run panel: state badge + Start / Stop / Reset, and a compact status strip under them */
+.run-panel { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-8); }
+.run-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-12); }
+.btn-group { display: flex; flex-wrap: wrap; gap: var(--sp-8); }
 .run-stats {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4) var(--sp-12);
-  margin-left: var(--sp-12); font-size: var(--fs-12); color: var(--text-muted);
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4);
+  font-size: var(--fs-12); color: var(--text-muted);
 }
-.run-stats .stat-value { font-weight: 600; color: var(--text); }
-.run-stats .stat-value.ok { color: var(--ok-text); }
-.run-stats .stat-sep { color: var(--border-strong); }
+.run-stats .stat-value { font-weight: 600; color: var(--text); margin-right: var(--sp-12); }
+.run-stats .stat-value:last-child { margin-right: 0; }
+.load-bar { width: 48px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.load-fill { height: 100%; width: 0; background: var(--ok); transition: width 0.3s; }
+.load-fill.mid { background: var(--warn); }
+.load-fill.high { background: var(--danger); }
 .vin-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); margin-top: var(--sp-4); }
 .vin-input { flex: 1 1 210px; min-width: 0; font-weight: 600; text-transform: uppercase; }
 .action-btn {
@@ -200,11 +213,18 @@ body, .nicegui-content {
   border-radius: var(--radius); border: 1px solid transparent; cursor: pointer;
   display: inline-flex; align-items: center; gap: var(--sp-8);
 }
-.btn-start { background: var(--accent); color: var(--surface); border-color: var(--accent); }
-.btn-stop { background: var(--surface); color: var(--danger-text); border-color: var(--border-strong); }
+.btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+.btn-start { background: var(--ok); color: var(--surface); border-color: var(--ok); }
+.btn-stop { background: var(--surface); color: var(--danger-text); border-color: var(--danger-line); }
 .btn-restart { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
-.btn-quit { background: var(--danger); color: var(--surface); border-color: var(--danger); }
+.btn-ghost { background: transparent; color: var(--text-muted); border-color: transparent; }
+.btn-ghost:hover { background: var(--bg); color: var(--text); }
 .btn-disabled { opacity: 0.5; pointer-events: none; }
+/* Disabled is obvious: flat grey, no colour, not-allowed cursor */
+.action-btn.disabled, .action-btn[disabled] {
+  background: var(--bg) !important; color: var(--text-subtle) !important;
+  border-color: var(--border) !important; opacity: 1 !important; box-shadow: none !important;
+}
 .action-btn:focus-visible, .tab-btn:focus-visible { box-shadow: var(--focus-ring); }
 
 .tab-bar {
@@ -430,7 +450,7 @@ body, .nicegui-content {
   .bus-controls-group { width: 100%; }
   .bus-field, .bus-field-wide { flex: 1 1 100%; }
   .bus-select, .bus-field-wide .bus-select { width: 100%; }
-  .run-stats { margin-left: 0; }
+  .run-panel { align-items: flex-start; width: 100%; }
   .tab-bar { flex-wrap: wrap; }
   .tab-btn { padding: var(--sp-8) var(--sp-12); }
   .tab-pill { display: none; }
