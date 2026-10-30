@@ -25,15 +25,15 @@ APP_CSS = """
   --border: #E3E6EB;
   --border-strong: #CDD2DA;
   --text: #1A1D23;
-  --text-muted: #6B7280;
-  --text-subtle: #9CA3AF;
+  --text-muted: #646B78;      /* >= 4.5:1 on every surface and soft tint */
+  --text-subtle: #9CA3AF;     /* icons, dots, disabled only: too light for text */
   --accent: #2563EB;          /* interactive only: buttons, links, active tab, focus */
   --accent-soft: #EFF4FF;
   --accent-line: #BFD3FE;
-  --ok: #16A34A;
+  --ok: #15803D;              /* white text on it: 5.0:1 */
   --ok-soft: #ECFDF3;
   --ok-line: #A6E3BC;
-  --ok-text: #15803D;
+  --ok-text: #166534;
   --warn: #D97706;
   --warn-soft: #FFF8EB;
   --warn-line: #FAD9A5;
@@ -217,7 +217,7 @@ html.logs-collapsed .logs-rail {
 .bus-field { flex: 0 1 auto; min-width: 0; }
 .bus-select { width: 220px; max-width: 100%; }
 .bus-field-wide .bus-select { width: 260px; }
-.bus-select.is-hint .q-field__native span { color: var(--text-subtle); }
+.bus-select.is-hint .q-field__native span { color: var(--text-muted); }
 /* Run panel: state badge + Start / Stop / Reset, and a compact status strip under them */
 .run-panel { display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-8); }
 .run-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-12); }
@@ -367,10 +367,11 @@ html.logs-collapsed .logs-rail {
   background: var(--ok) !important; color: var(--surface) !important; box-shadow: none;
 }
 
-/* ECU stopped: the signal cards fade (still editable) under a banner with Start */
-.signals-pane.ecu-stopped .pgn-card { opacity: 0.6; transition: opacity 0.15s; }
+/* ECU stopped: the signal cards turn grey (still editable) under a banner with Start.
+   Greyscale, not opacity, so the text keeps its 4.5:1 contrast. */
+.signals-pane.ecu-stopped .pgn-card { filter: grayscale(1); transition: filter 0.15s; }
 .signals-pane.ecu-stopped .pgn-card:hover,
-.signals-pane.ecu-stopped .pgn-card:focus-within { opacity: 1; }
+.signals-pane.ecu-stopped .pgn-card:focus-within { filter: none; }
 .stopped-banner {
   display: flex; align-items: center; gap: var(--sp-12); margin-bottom: var(--sp-8);
   padding: var(--sp-8) var(--sp-12); border-radius: var(--radius); font-size: var(--fs-13);
@@ -495,11 +496,11 @@ html.logs-collapsed .logs-rail {
 .traffic-table tr.tr-rx td:nth-child(2) { color: var(--ok-text); font-weight: 600; }
 .traffic-table tr.tr-rx td { background: var(--ok-soft); }
 .traffic-table tr.tr-err td { color: var(--danger-text); }
-.traffic-table tr.tr-gap td { color: var(--text-subtle); font-style: italic; }
+.traffic-table tr.tr-gap td { color: var(--text-muted); font-style: italic; }
 .traffic-table tr.tr-hidden { display: none; }
 .traffic-table td:nth-child(9) { color: var(--accent); }
 .traffic-table tr.tr-err td:nth-child(9) { color: var(--danger-text); }
-.traffic-table tr.tr-gap td:nth-child(9) { color: var(--text-subtle); }
+.traffic-table tr.tr-gap td:nth-child(9) { color: var(--text-muted); }
 .traffic-empty { padding: var(--sp-16); color: var(--text-muted); font-size: var(--fs-12); }
 .traffic-new {
   position: absolute; right: var(--sp-16); bottom: var(--sp-12); font-size: var(--fs-12); font-weight: 600;
@@ -579,7 +580,7 @@ html.logs-collapsed .logs-rail {
   display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) minmax(190px, 220px);
   align-items: center; gap: var(--sp-8) var(--sp-16); font-size: var(--fs-12);
 }
-.fault-cell-muted { color: var(--text-subtle); font-size: var(--fs-12); white-space: nowrap; }
+.fault-cell-muted { color: var(--text-muted); font-size: var(--fs-12); white-space: nowrap; }
 .fault-cell-name { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fault-select { min-width: 190px; }
 .footer-faults { color: var(--warn-text); font-weight: 600; }
@@ -599,7 +600,7 @@ html.logs-collapsed .logs-rail {
 .scenario-title { font-weight: 600; font-size: var(--fs-13); color: var(--text); }
 .scenario-desc { font-size: var(--fs-12); color: var(--text-muted); }
 .scenario-meta { font-size: var(--fs-12); color: var(--text-muted); }
-.scenario-dir { font-size: var(--fs-12); color: var(--text-subtle); word-break: break-all; margin-top: calc(-1 * var(--sp-8)); }
+.scenario-dir { font-size: var(--fs-12); color: var(--text-muted); word-break: break-all; margin-top: calc(-1 * var(--sp-8)); }
 .scenario-error {
   background: var(--danger-soft); color: var(--danger-text); border: 1px solid var(--danger-line); border-radius: var(--radius);
   padding: var(--sp-8) var(--sp-12); font-size: var(--fs-12); white-space: pre-wrap;
@@ -628,8 +629,8 @@ html.logs-collapsed .logs-rail {
 .scenario-what { display: flex; flex-direction: column; min-width: 0; }
 .scenario-note { color: var(--text-muted); font-style: italic; }
 .scenario-eta { color: var(--accent); font-size: var(--fs-12); white-space: nowrap; font-family: var(--font-mono); }
-.scenario-step.done { color: var(--text-subtle); }
-.scenario-step.done .scenario-note, .scenario-step.done .scenario-at { color: var(--text-subtle); }
+.scenario-step.done { color: var(--text-muted); }
+.scenario-step.done .scenario-note, .scenario-step.done .scenario-at { color: var(--text-muted); }
 .scenario-step.current { background: var(--ok-soft); border-left-color: var(--ok); }
 .scenario-step.next { background: var(--accent-soft); border-left-color: var(--accent-line); }
 @media (max-width: 760px) {

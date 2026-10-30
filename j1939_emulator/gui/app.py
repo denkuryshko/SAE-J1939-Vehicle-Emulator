@@ -183,6 +183,9 @@ def run_gui(
         ui.add_head_html(FONTS_HTML)
         ui.add_css(APP_CSS)
         ui.add_body_html(LOGS_LAYOUT_JS)
+        # Quasar colour classes (text-primary, bg-positive ...) take NiceGUI's own palette
+        # with !important; give them the design tokens' values (see :root in styles.py).
+        ui.colors(primary="#2563EB", positive="#15803D", negative="#DC2626", warning="#D97706", info="#2563EB")
         _build_page(state)
 
     ui.run(
@@ -356,27 +359,27 @@ def _build_page(state: GuiState) -> None:
             with ui.element("div").classes("workspace"):
                 with ui.element("div").classes("work-main"):
                     with ui.element("nav").classes("tab-bar"):
-                        tab_signals = ui.button().classes("tab-btn active").props("flat dense")
+                        tab_signals = ui.button(color=None).classes("tab-btn active").props("flat dense")
                         with tab_signals:
                             ui.label("Signals (PGNs & SPNs)")
-                        tab_ecu = ui.button().classes("tab-btn").props("flat dense")
+                        tab_ecu = ui.button(color=None).classes("tab-btn").props("flat dense")
                         with tab_ecu:
                             ui.label("ECU & Vehicle (VIN)")
-                        tab_diag = ui.button().classes("tab-btn").props("flat dense")
+                        tab_diag = ui.button(color=None).classes("tab-btn").props("flat dense")
                         with tab_diag:
                             ui.label("Diagnostics (DTC)")
                             diag_tab_pill = ui.label("").classes("tab-pill warn")
                             diag_tab_pill.set_visibility(False)
                             state.ui_refs["diag_tab_pill"] = diag_tab_pill
-                        tab_traffic = ui.button().classes("tab-btn").props("flat dense")
+                        tab_traffic = ui.button(color=None).classes("tab-btn").props("flat dense")
                         with tab_traffic:
                             ui.label("Traffic")
-                        tab_faults = ui.button().classes("tab-btn").props("flat dense")
+                        tab_faults = ui.button(color=None).classes("tab-btn").props("flat dense")
                         with tab_faults:
                             ui.label("Faults")
                             faults_tab_pill = ui.label("").classes("tab-pill warn")
                             faults_tab_pill.set_visibility(False)
-                        tab_scen = ui.button().classes("tab-btn").props("flat dense")
+                        tab_scen = ui.button(color=None).classes("tab-btn").props("flat dense")
                         with tab_scen:
                             ui.label("Scenarios")
                             scen_tab_pill = ui.label("").classes("tab-pill")

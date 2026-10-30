@@ -177,7 +177,7 @@ def counter_spn(
                 {s: f"{s:g}" for s in steps}, value=step if step in steps else steps[0]
             ).props(
                 # Quasar's colour classes win over app CSS (cascade layers): set them here
-                "dense no-caps unelevated color=transparent text-color=grey-7 "
+                "dense no-caps unelevated color=transparent text-color=grey-8 "
                 "toggle-color=white toggle-text-color=dark"
             ).classes("step-toggle font-mono")
             if hint:
