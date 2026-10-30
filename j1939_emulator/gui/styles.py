@@ -157,11 +157,34 @@ body, .nicegui-content {
   flex: 1; max-width: 2200px; width: 100%; margin: 0 auto; padding: var(--sp-16);
   display: flex; flex-direction: column; gap: var(--sp-12);
 }
-/* Tabs on the left, the Logs panel always visible on the right (below them on narrow screens) */
+/* Tabs on the left, the Logs panel on the right (below them on narrow screens). Its width
+   (--logs-w, set by dragging the splitter) and collapsed state are kept in the browser. */
 .workspace {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(400px, 36%); gap: var(--sp-12);
-  align-items: start;
+  display: grid; column-gap: var(--sp-4); row-gap: var(--sp-12); align-items: start;
+  grid-template-columns: minmax(0, 1fr) 8px clamp(320px, var(--logs-w, 36%), max(320px, calc(100% - 480px)));
 }
+.logs-splitter { align-self: stretch; position: relative; cursor: col-resize; touch-action: none; }
+.logs-splitter::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; border-radius: 1px;
+  background: transparent; transition: background 0.15s;
+}
+.logs-splitter:hover::after, html.logs-resizing .logs-splitter::after { background: var(--accent-line); }
+html.logs-resizing, html.logs-resizing * { cursor: col-resize !important; user-select: none; }
+.logs-rail { display: none; }
+html.logs-collapsed .workspace { grid-template-columns: minmax(0, 1fr) 0 40px; }
+html.logs-collapsed .logs-splitter { visibility: hidden; }
+html.logs-collapsed .logs-panel { display: none; }
+html.logs-collapsed .logs-rail {
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-8); padding: var(--sp-8) 0;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.logs-rail-label { writing-mode: vertical-rl; font-size: var(--fs-12); font-weight: 600; color: var(--text-muted); }
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-4);
+  margin-top: var(--sp-8); padding: var(--sp-24) var(--sp-12); font-size: var(--fs-13); color: var(--text-muted);
+  background: var(--surface); border: 1px dashed var(--border-strong); border-radius: var(--radius); text-align: center;
+}
+.empty-state .q-icon { font-size: 28px; color: var(--text-subtle); }
 .work-main { display: flex; flex-direction: column; gap: var(--sp-12); min-width: 0; }
 .work-logs { position: sticky; top: var(--sp-12); min-width: 0; }
 .logs-panel {
@@ -177,7 +200,10 @@ body, .nicegui-content {
 .trace-log { height: max(320px, calc(100vh - 420px)); font-family: var(--font-mono) !important; }
 @media (max-width: 1100px) {
   .trace-log { height: 320px; }
-  .workspace { grid-template-columns: minmax(0, 1fr); }
+  .workspace, html.logs-collapsed .workspace { grid-template-columns: minmax(0, 1fr); }
+  .logs-splitter { display: none; }
+  html.logs-collapsed .logs-rail { flex-direction: row; padding: var(--sp-4) var(--sp-8); }
+  .logs-rail-label { writing-mode: horizontal-tb; }
   .work-logs { position: static; }
   .logs-panel { max-height: none; }
 }
@@ -611,4 +637,56 @@ body, .nicegui-content {
   .fault-cell-name { grid-column: 1 / -1; }
   .fault-pgn-table .fault-select { grid-column: 1 / -1; }
 }
+"""
+
+# Logs panel: drag the splitter to resize it (min 320 px), double-click it for the default
+# width, collapse / expand it with its buttons. Both are remembered in localStorage.
+LOGS_LAYOUT_JS = """
+<script>
+(() => {
+  const root = document.documentElement;
+  const KEY_W = "j1939.logsWidth", KEY_C = "j1939.logsCollapsed", MIN = 320;
+  const saved = parseInt(localStorage.getItem(KEY_W) || "", 10);
+  if (saved >= MIN) root.style.setProperty("--logs-w", saved + "px");
+  if (localStorage.getItem(KEY_C) === "1") root.classList.add("logs-collapsed");
+
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".logs-collapse")) {
+      root.classList.add("logs-collapsed");
+      localStorage.setItem(KEY_C, "1");
+    } else if (e.target.closest(".logs-expand")) {
+      root.classList.remove("logs-collapsed");
+      localStorage.setItem(KEY_C, "0");
+    }
+  });
+  document.addEventListener("dblclick", (e) => {
+    if (!e.target.closest(".logs-splitter")) return;
+    root.style.removeProperty("--logs-w");
+    localStorage.removeItem(KEY_W);
+  });
+  document.addEventListener("pointerdown", (e) => {
+    const bar = e.target.closest(".logs-splitter");
+    if (!bar || e.button !== 0) return;
+    e.preventDefault();
+    const right = bar.parentElement.getBoundingClientRect().right;
+    let width = null;
+    const move = (ev) => {
+      width = Math.max(MIN, Math.round(right - ev.clientX - 6));
+      root.style.setProperty("--logs-w", width + "px");
+    };
+    const up = () => {
+      bar.removeEventListener("pointermove", move);
+      bar.removeEventListener("pointerup", up);
+      bar.removeEventListener("pointercancel", up);
+      root.classList.remove("logs-resizing");
+      if (width !== null) localStorage.setItem(KEY_W, String(width));
+    };
+    bar.setPointerCapture(e.pointerId);
+    root.classList.add("logs-resizing");
+    bar.addEventListener("pointermove", move);
+    bar.addEventListener("pointerup", up);
+    bar.addEventListener("pointercancel", up);
+  });
+})();
+</script>
 """

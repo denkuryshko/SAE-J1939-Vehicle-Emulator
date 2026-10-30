@@ -21,7 +21,7 @@ from j1939_emulator.bus.detect import (
 from j1939_emulator.bus.session import BusHealth, EmulatorSession
 from j1939_emulator.config import load_config
 from j1939_emulator.meters_store import restore_meters
-from j1939_emulator.gui.styles import APP_CSS, FONTS_HTML
+from j1939_emulator.gui.styles import APP_CSS, FONTS_HTML, LOGS_LAYOUT_JS
 from j1939_emulator.gui.widgets import (
     build_ccvs,
     build_diagnostics_pane,
@@ -182,6 +182,7 @@ def run_gui(
     def index_page() -> None:
         ui.add_head_html(FONTS_HTML)
         ui.add_css(APP_CSS)
+        ui.add_body_html(LOGS_LAYOUT_JS)
         _build_page(state)
 
     ui.run(
@@ -361,7 +362,6 @@ def _build_page(state: GuiState) -> None:
                         tab_ecu = ui.button().classes("tab-btn").props("flat dense")
                         with tab_ecu:
                             ui.label("ECU & Vehicle (VIN)")
-                            ui.label(f"Node 0x{session.identity.source_address:02X}").classes("tab-pill")
                         tab_diag = ui.button().classes("tab-btn").props("flat dense")
                         with tab_diag:
                             ui.label("Diagnostics (DTC)")
@@ -374,11 +374,13 @@ def _build_page(state: GuiState) -> None:
                         tab_faults = ui.button().classes("tab-btn").props("flat dense")
                         with tab_faults:
                             ui.label("Faults")
-                            faults_tab_pill = ui.label("None").classes("tab-pill")
+                            faults_tab_pill = ui.label("").classes("tab-pill warn")
+                            faults_tab_pill.set_visibility(False)
                         tab_scen = ui.button().classes("tab-btn").props("flat dense")
                         with tab_scen:
                             ui.label("Scenarios")
                             scen_tab_pill = ui.label("").classes("tab-pill")
+                            scen_tab_pill.set_visibility(False)
 
                     pane_signals = ui.element("section").classes("signals-pane ecu-stopped")
                     with pane_signals:
@@ -443,6 +445,10 @@ def _build_page(state: GuiState) -> None:
                         build_scenarios_pane(session, state.runner, state.ui_refs)
                     pane_scen.set_visibility(False)
 
+                # Drag to resize the Logs panel; width and collapsed state live in the browser
+                ui.element("div").classes("logs-splitter").props(
+                    'role=separator aria-orientation=vertical title="Drag to resize the Logs panel"'
+                )
                 with ui.element("aside").classes("work-logs"):
                     build_logs_pane(session, state.ui_refs)
                     logs_tab_pill = state.ui_refs["logs_pill"]
@@ -682,14 +688,13 @@ def _build_page(state: GuiState) -> None:
     def update_chrome() -> None:
         st = session.stats()
         n_requests = len(session.recent_requests())
-        logs_tab_pill.set_text(f"{n_requests} Request{'' if n_requests == 1 else 's'}")
+        logs_tab_pill.set_text(str(n_requests))
+        logs_tab_pill.set_visibility(n_requests > 0)
         faults_on = active_faults(sig, session.faults)
-        faults_tab_pill.set_text(f"{len(faults_on)} Active" if faults_on else "None")
+        faults_tab_pill.set_text(str(len(faults_on)))
+        faults_tab_pill.set_visibility(bool(faults_on))
         if faults_on:
-            faults_tab_pill.classes(add="warn")
             foot_faults.set_text(f"⚠ Faults: {len(faults_on)} active")
-        else:
-            faults_tab_pill.classes(remove="warn")
         foot_faults.set_visibility(bool(faults_on))
         runner = state.runner
         if runner.active and runner.scenario is not None:
@@ -770,7 +775,7 @@ def _build_page(state: GuiState) -> None:
             foot_dtc.classes(remove="warn")
         pill = state.ui_refs.get("diag_tab_pill")
         if pill is not None:
-            pill.set_text(f"{c} Active")
+            pill.set_text(str(c))
             pill.set_visibility(c > 0)
 
     def refresh_payloads() -> None:

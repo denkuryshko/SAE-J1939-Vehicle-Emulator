@@ -1071,17 +1071,32 @@ def build_traffic_pane(session) -> Callable[[], None]:
 
 
 def build_logs_pane(session, refs: dict[str, Any]) -> None:
-    """Logs panel (always visible): incoming requests and the J1939 trace, for ELD bench debugging."""
+    """Logs panel (always visible): incoming requests and the J1939 trace, for ELD bench debugging.
+
+    The panel collapses to a thin rail and its width is set with the splitter; both are
+    handled in the browser (LOGS_LAYOUT_JS) and remembered there.
+    """
+    with ui.element("div").classes("logs-rail"):
+        ui.button(icon="chevron_left", color=None).classes("icon-btn logs-expand").props(
+            "flat round dense"
+        ).tooltip("Show the Logs panel")
+        ui.label("Logs").classes("logs-rail-label")
     with ui.element("div").classes("card logs-panel"):
         with ui.column().classes("gap-0 pane-head"):
             with ui.row().classes("w-full items-center gap-2"):
                 ui.label("Logs").classes("pane-title")
-                refs["logs_pill"] = ui.label("0 Requests").classes("tab-pill logs-pill")
+                refs["logs_pill"] = ui.label("").classes("tab-pill logs-pill").tooltip(
+                    "Incoming requests"
+                )
+                refs["logs_pill"].set_visibility(False)
                 ui.space()
                 paused = ui.label("PAUSED").classes("logs-paused")
                 live = ui.switch("Live", value=True).props("dense color=positive").classes(
                     "logs-live"
                 )
+                ui.button(icon="chevron_right", color=None).classes(
+                    "icon-btn logs-collapse"
+                ).props("flat round dense").tooltip("Collapse the Logs panel")
             ui.label(
                 "Requests from other nodes and a decoded J1939 trace of each run"
             ).classes("pane-sub")
@@ -1099,6 +1114,14 @@ def build_logs_pane(session, refs: dict[str, Any]) -> None:
         build_trace_view(session, monitor)
 
 
+def _empty_state(icon: str, text: str) -> Any:
+    """An icon and one line, in place of an empty table or log."""
+    with ui.element("div").classes("empty-state") as box:
+        ui.icon(icon)
+        ui.label(text)
+    return box
+
+
 def build_request_log(session, monitor: dict[str, bool]) -> None:
     """Requests (PGN 59904) from other nodes, e.g. an ELD asking for the VIN."""
     with ui.element("div").classes("subpanel"):
@@ -1108,15 +1131,13 @@ def build_request_log(session, monitor: dict[str, bool]) -> None:
                 ui.label(
                     "Last 50 requests from other nodes and how this ECU answered, newest first."
                 ).classes("text-sm-muted")
-            btn_clear = ui.button("Clear").classes(
+            btn_clear = ui.button("Clear", color=None).classes(
                 "action-btn btn-restart"
             ).props("unelevated dense")
         table = ui.table(columns=_REQUEST_COLUMNS, rows=[], row_key="id").props(
             "dense flat bordered hide-bottom"
         ).classes("w-full font-mono").style("font-size:12px;margin-top:8px;")
-        empty = ui.label("No requests received yet.").classes("text-sm-muted").style(
-            "margin-top:8px;"
-        )
+        empty = _empty_state("inbox", "No requests yet")
 
     shown: list[dict[str, Any]] = []
 
@@ -1131,12 +1152,14 @@ def build_request_log(session, monitor: dict[str, bool]) -> None:
         table.update()
         table.set_visibility(bool(rows))
         empty.set_visibility(not rows)
+        btn_clear.set_enabled(bool(rows))
 
     def on_clear() -> None:
         session.clear_requests()
         refresh(force=True)
 
     btn_clear.on_click(on_clear)
+    btn_clear.disable()
     table.set_visibility(False)
     ui.timer(0.5, refresh)
 
@@ -1151,16 +1174,24 @@ def build_trace_view(session, monitor: dict[str, bool]) -> None:
                                       "EOMA / Abort), replies, send and bus errors.").classes(
                     "text-sm-muted"
                 ).style("overflow-wrap:anywhere;")
-            btn_download = ui.button("Download").classes(
+            btn_download = ui.button("Download", icon="download", color=None).classes(
                 "action-btn btn-restart"
             ).props("unelevated dense")
         log = ui.log(max_lines=500).classes("trace-log w-full font-mono").style(
             "font-size:12px;margin-top:8px;background:var(--surface);white-space:pre;"
         )
+        empty = _empty_state("receipt_long", "The trace appears after Start")
+    log.set_visibility(False)
+    btn_download.disable()  # until there is something in the trace file
 
     view = {"trace": None, "count": 0}
 
+    def has_lines() -> bool:
+        trace = session.trace
+        return trace is not None and trace.path is not None and trace.recent()[0] > 0
+
     def refresh() -> None:
+        btn_download.set_enabled(has_lines())
         if not monitor["on"]:
             return
         trace = session.trace
@@ -1169,6 +1200,8 @@ def build_trace_view(session, monitor: dict[str, bool]) -> None:
         if trace is not view["trace"]:
             view["trace"], view["count"] = trace, 0
             log.clear()
+            log.set_visibility(False)
+            empty.set_visibility(True)
             path_label.set_text(f"File: {trace.path}" if trace.path else "File: not available (in-app only)")
         count, lines = trace.recent()
         new = count - view["count"]
@@ -1177,6 +1210,8 @@ def build_trace_view(session, monitor: dict[str, bool]) -> None:
         for line in lines[-min(new, len(lines)):]:
             log.push(line)
         view["count"] = count
+        log.set_visibility(True)
+        empty.set_visibility(False)
 
     def on_download() -> None:
         trace = session.trace
