@@ -408,13 +408,15 @@ def _build_page(state: GuiState) -> None:
                         state.payload_labels.clear()
                         sig.clear_listeners()
 
-                        build_ignition(sig)
-                        build_eec1(session, state.payload_labels)
-                        build_ccvs(session, state.payload_labels)
-                        build_tco1(session, state.payload_labels)
-                        build_vd(session, state.payload_labels)
-                        build_hrvd(session, state.payload_labels)
-                        build_hours(session, state.payload_labels)
+                        # One column grid for all cards, so every SPN row lines up (CSS subgrid)
+                        with ui.element("div").classes("sig-list"):
+                            build_ignition(sig)
+                            build_eec1(session, state.payload_labels)
+                            build_ccvs(session, state.payload_labels)
+                            build_tco1(session, state.payload_labels)
+                            build_vd(session, state.payload_labels)
+                            build_hrvd(session, state.payload_labels)
+                            build_hours(session, state.payload_labels)
 
                     pane_ecu = ui.element("section")
                     with pane_ecu:

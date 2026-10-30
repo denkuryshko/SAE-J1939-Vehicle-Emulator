@@ -275,33 +275,42 @@ body, .nicegui-content {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   margin-bottom: var(--sp-8); overflow: hidden;
 }
+/* Signals: one column grid shared by every card (subgrid), so all SPN rows line up:
+   SPN | name | value field | control (slider, step choice) | presets */
+.signals-pane { container: signals / inline-size; }
+.sig-list {
+  display: grid; column-gap: var(--sp-12); row-gap: var(--sp-8);
+  grid-template-columns: 72px minmax(0, 1fr) 160px minmax(0, 2fr) auto;
+}
+.sig-list > .pgn-card { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; margin-bottom: 0; }
+.sig-list > .pgn-card > * { grid-column: 1 / -1; }
 .pgn-header {
   padding: var(--sp-4) var(--sp-12); background: var(--bg); border-bottom: 1px solid var(--border);
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-4) var(--sp-8);
 }
 .pgn-title-group { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; flex: 1 1 260px; }
 .badge-acronym {
-  font-size: var(--fs-12); font-weight: 600; background: var(--text); color: var(--surface);
+  font-size: var(--fs-12); font-weight: 600; background: var(--border); color: var(--text);
   padding: 0 var(--sp-8); border-radius: var(--radius); flex-shrink: 0;
 }
 .pgn-name {
   font-weight: 600; font-size: var(--fs-14); color: var(--text); min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.pgn-number { font-size: var(--fs-12); font-weight: 400; color: var(--text-subtle); white-space: nowrap; flex-shrink: 0; }
+.pgn-meta { font-size: var(--fs-12); font-weight: 400; color: var(--text-muted); white-space: nowrap; flex-shrink: 0; }
 .pgn-header-right { display: flex; align-items: center; gap: var(--sp-8); margin-left: auto; }
 .pgn-badges { display: flex; align-items: center; gap: var(--sp-8); }
-.pgn-state {
-  font-size: var(--fs-12); font-weight: 600; border-radius: var(--radius); white-space: nowrap;
-  width: 48px; text-align: center;
-}
-.pgn-state.on { background: var(--ok-soft); color: var(--ok-text); border: 1px solid var(--ok-line); }
-.pgn-state.off { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border-strong); }
+.pgn-switch .q-toggle__label { font-size: var(--fs-12); font-weight: 600; width: 28px; padding-left: var(--sp-4); }
+.pgn-switch.on .q-toggle__label { color: var(--ok-text); }
+.pgn-switch.off .q-toggle__label { color: var(--text-muted); }
 .engine-off-chip {
   font-size: var(--fs-12); font-weight: 600; padding: 0 var(--sp-8); border-radius: var(--radius); white-space: nowrap;
   background: var(--warn-soft); color: var(--warn-text); border: 1px solid var(--warn-line);
 }
-.details-btn { font-size: var(--fs-12); color: var(--accent); min-height: 24px !important; padding: 0 var(--sp-4); }
+.details-btn { color: var(--text-muted) !important; }
+.details-btn:hover { color: var(--text) !important; }
+.details-btn .q-icon { transition: transform 0.15s; }
+.details-btn.open .q-icon { transform: rotate(180deg); }
 .pgn-details { background: var(--bg); border-bottom: 1px solid var(--border); }
 .pgn-details-row {
   padding: var(--sp-4) var(--sp-12); border-bottom: 1px solid var(--border);
@@ -346,47 +355,83 @@ body, .nicegui-content {
 .stopped-banner-text { flex: 1 1 auto; min-width: 0; }
 
 .signal-box { padding: var(--sp-4) var(--sp-12); }
-/* Same column grid in every signal row so cards line up: SPN | name | value | controls */
-.sig-row {
-  display: grid; align-items: center; gap: var(--sp-4) var(--sp-12);
-  grid-template-columns: 72px 196px 136px minmax(0, 1fr);
-}
+.sig-row { display: grid; align-items: center; gap: var(--sp-4) var(--sp-12); grid-template-columns: subgrid; }
+.sig-row + .sig-row { border-top: 1px solid var(--border); }
 .sig-spn { display: flex; }
 .signal-name { font-weight: 500; min-width: 0; line-height: 1.25; overflow-wrap: break-word; }
 .spn-badge {
   font-size: var(--fs-12); font-weight: 500; background: var(--bg); color: var(--text-muted); white-space: nowrap;
   border: 1px solid var(--border); border-radius: var(--radius); padding: 0 var(--sp-4);
 }
-.sig-value {
-  display: flex; align-items: baseline; justify-content: flex-end; gap: var(--sp-4); white-space: nowrap;
-}
-.sig-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4) var(--sp-8); min-width: 0; }
-.signal-big {
-  font-size: var(--fs-20); font-weight: 600; line-height: 1.1; color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
+.sig-value { display: flex; align-items: center; min-width: 0; }
+.sig-controls { display: flex; align-items: center; gap: var(--sp-4) var(--sp-8); min-width: 0; }
+.sig-presets { display: flex; align-items: center; gap: var(--sp-4); }
 .signal-unit { font-size: var(--fs-12); font-weight: 500; color: var(--text-muted); }
-.signal-val { color: var(--text); }
-.range-slider { flex: 1 1 80px; min-width: 80px; height: 24px; }
+.range-slider { flex: 1 1 auto; min-width: 80px; height: 24px; }
 .compact-input .q-field__control,
 .compact-input .q-field__marginal { height: 32px !important; min-height: 32px !important; }
 .compact-input .q-field__native { padding: 0 !important; min-height: 32px !important; }
-.value-input { width: 112px; flex-shrink: 0; }
-.counter-input { width: 112px; flex-shrink: 0; }
+/* The value is shown once, in its field, with the unit inside ("800 rpm"); neutral colour */
+.value-input { width: 100%; }
+.value-input .q-field__native { color: var(--text); font-weight: 600; text-align: right; -moz-appearance: textfield; }
+.value-input .q-field__native::-webkit-inner-spin-button,
+.value-input .q-field__native::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.value-input .q-field__suffix {
+  color: var(--text-muted); font-size: var(--fs-12); padding: 0 0 0 var(--sp-4); align-self: center; line-height: 1;
+}
 .cycle-input { width: 80px; }
+.preset-chip {
+  font-size: var(--fs-12); font-weight: 500; min-height: 22px; padding: 0 var(--sp-8); border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text) !important; white-space: nowrap;
+}
+.preset-chip:hover { background: var(--bg); }
 .preset-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); }
 .preset-btn {
   font-size: var(--fs-12); padding: 0 var(--sp-8); min-height: 24px; border-radius: var(--radius);
   border: 1px solid var(--border-strong); background: var(--surface); color: var(--text);
   cursor: pointer; white-space: nowrap;
 }
-.step-group { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
-.step-btn {
-  font-size: var(--fs-12); font-weight: 600; min-width: 48px; min-height: 28px; padding: 0 var(--sp-8);
-  border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface);
-  color: var(--text) !important; font-family: var(--font-mono) !important; font-variant-numeric: tabular-nums;
+/* Meters: stepper [-][value][+] and a segmented step choice */
+.stepper { width: 100%; }
+.stepper .value-input { flex: 1 1 0; width: auto; min-width: 0; }
+.stepper-input .q-field__control { border-radius: 0 !important; padding: 0 var(--sp-8); }
+.stepper-btn {
+  width: 28px; min-width: 28px; min-height: 32px !important; height: 32px; padding: 0;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-muted) !important;
 }
+.stepper-btn:hover { background: var(--bg); color: var(--text) !important; }
+.stepper-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); border-right: none; }
+.stepper-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: none; }
+.step-caption { font-size: var(--fs-12); color: var(--text-muted); }
+.step-toggle {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); padding: 2px; gap: 2px;
+}
+.step-toggle .q-btn { font-size: var(--fs-12); font-weight: 500; min-height: 24px; padding: 0 var(--sp-8); border-radius: 4px; }
+.step-toggle .q-btn[aria-pressed="true"] {
+  font-weight: 600; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 0 0 1px var(--border-strong);
+}
+/* Derived (read-only) SPN: muted row, the value as text, "derived from SPN ..." */
+.sig-row.derived { background: var(--bg); }
+.derived-value {
+  justify-content: flex-end; align-items: baseline; gap: var(--sp-4); padding: 0 var(--sp-12);
+  font-weight: 600; color: var(--text); white-space: nowrap;
+}
+.derived-caption { font-size: var(--fs-12); color: var(--text-muted); }
 .sig-hint { font-size: var(--fs-16); color: var(--text-subtle); cursor: help; }
+/* By the width of the signals pane (it shares the row with Logs): presets go under the
+   slider, then on narrow screens every row stacks */
+@container signals (max-width: 1000px) {
+  .sig-list { grid-template-columns: 72px minmax(0, 1fr) 160px minmax(0, 2fr); }
+  .sig-presets { grid-column: 4; flex-wrap: wrap; }
+  .sig-presets:empty { display: none; }
+}
+@container signals (max-width: 560px) {
+  .sig-list, .sig-list > .pgn-card { display: block; }
+  .sig-list > .pgn-card { margin-bottom: var(--sp-8); }
+  .sig-row { grid-template-columns: auto minmax(0, 1fr); }
+  .sig-value, .sig-controls, .sig-presets { grid-column: 1 / -1; }
+  .sig-value { max-width: 240px; }
+}
 
 /* Traffic Monitor: dense table, newest frame at the bottom */
 .traffic-card { display: flex; flex-direction: column; gap: var(--sp-8); }
@@ -472,12 +517,6 @@ body, .nicegui-content {
   .tab-pill { display: none; }
   .pgn-header .ign-switch { width: 100%; }
   .ign-switch .ign-btn { flex: 1 1 50%; padding: var(--sp-8); font-size: var(--fs-12); }
-  .sig-row { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .sig-controls { grid-column: 1 / -1; }
-  .range-slider { flex-basis: 100%; }
-  .counter-input { flex: 1 1 100px; }
-  .step-group { width: 100%; }
-  .step-btn { flex: 1 1 0; min-width: 0; }
   .signal-big { font-size: var(--fs-16); }
   .j1939-footer { height: auto; padding: var(--sp-4) var(--sp-12); flex-wrap: wrap; gap: var(--sp-4) var(--sp-16); }
 }

@@ -65,12 +65,14 @@ def _signal_label(spn: str, name: str) -> None:
     ui.label(name).classes("signal-name")
 
 
-def _signal_value(unit: str, initial: float, decimals: int | None) -> Any:
-    """The current value, the most prominent thing in the row."""
-    with ui.element("div").classes("sig-value"):
-        disp = ui.label(_fmt_value(float(initial), decimals)).classes("signal-big font-mono")
-        ui.label(unit).classes("signal-unit")
-    return disp
+def _value_input(
+    unit: str, initial: float, min_v: float, max_v: float, step: float, decimals: int | None
+) -> Any:
+    """The value, shown once: a number field with the unit inside it ("800 rpm")."""
+    return ui.number(
+        value=initial, min=min_v, max=max_v, step=step,
+        format=f"%.{decimals}f" if decimals is not None else None,
+    ).props(f'dense outlined suffix="{unit}"').classes("value-input compact-input font-mono")
 
 
 def slider_spn(
@@ -88,26 +90,22 @@ def slider_spn(
 ) -> Any:
     with ui.element("div").classes("signal-box sig-row"):
         _signal_label(spn, name)
-        disp = _signal_value(unit, initial, decimals)
-        controls = ui.element("div").classes("sig-controls")
-        with controls:
-            # Input first, so it sits in the same place as the meters' input in every card.
-            num = ui.number(
-                value=initial,
-                min=min_v,
-                max=max_v,
-                step=number_step if number_step is not None else step,
-            ).props("dense outlined").classes("value-input compact-input font-mono")
+        with ui.element("div").classes("sig-value"):
+            num = _value_input(
+                unit, initial, min_v, max_v,
+                number_step if number_step is not None else step, decimals,
+            )
+        with ui.element("div").classes("sig-controls"):
             slider = ui.slider(min=min_v, max=max_v, step=step, value=initial).props(
                 "thumb-size=14px track-size=3px"
             ).classes("range-slider").tooltip(f"Range {min_v:g} – {max_v:g} {unit}")
+        presets_box = ui.element("div").classes("sig-presets")
 
         syncing = False
 
         def show(num_v: float) -> None:
             slider.value = num_v
             num.value = num_v
-            disp.set_text(_fmt_value(num_v, decimals))
 
         def apply(val) -> None:
             if syncing:
@@ -132,13 +130,20 @@ def slider_spn(
         slider.on_value_change(lambda e: apply(e.value))
         num.on_value_change(lambda e: apply(e.value))
 
-        if presets:
-            with controls, ui.element("div").classes("preset-group"):
-                for label, val in presets:
-                    ui.button(label, on_click=lambda v=val: apply(v)).classes(
-                        "preset-btn"
-                    ).props("flat dense")
+        with presets_box:
+            for label, val in presets or ():
+                ui.button(label, on_click=lambda v=val: apply(v), color=None).classes(
+                    "preset-chip"
+                ).props("flat dense no-caps")
     return sync
+
+
+# Up / Down in a meter field: one chosen step, Shift x10 (instead of the browser's own step).
+_STEP_KEYS_JS = """(e) => {
+  if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  e.preventDefault();
+  emit({dir: e.key === 'ArrowUp' ? 1 : -1, shift: e.shiftKey});
+}"""
 
 
 def counter_spn(
@@ -149,31 +154,42 @@ def counter_spn(
     max_v: float,
     decimals: int,
     on_change: Callable[[float], None],
-    steps: tuple[float, ...],
+    steps: tuple[float, ...] = (1, 10, 100, 1000),
+    step: float = 10,
     hint: str = "",
 ) -> Any:
-    """A meter (odometer, engine hours): exact number entry plus +/- step buttons, no slider."""
+    """A meter (odometer, engine hours): stepper [-][value][+] and a step choice, no slider."""
     with ui.element("div").classes("signal-box sig-row"):
         _signal_label(spn, name)
-        disp = _signal_value(unit, initial, decimals)
         current = [float(initial)]
         syncing = False
+        with ui.element("div").classes("sig-value stepper"):
+            minus = ui.button(icon="remove", color=None).classes("stepper-btn").props(
+                "flat dense"
+            )
+            num = _value_input(unit, initial, 0, max_v, 10 ** -decimals, decimals).classes(
+                "stepper-input"
+            )
+            plus = ui.button(icon="add", color=None).classes("stepper-btn").props("flat dense")
         with ui.element("div").classes("sig-controls"):
-            num = ui.number(
-                value=initial, min=0, max=max_v, step=10 ** -decimals, format=f"%.{decimals}f"
-            ).props("dense outlined").classes("counter-input compact-input font-mono")
-            with ui.element("div").classes("step-group font-mono"):
-                for step in (*(-s for s in reversed(steps)), *steps):
-                    ui.button(
-                        f"{step:+g}", on_click=lambda d=step: apply(current[0] + d), color=None
-                    ).classes("step-btn").props("flat dense")
+            ui.label("Step").classes("step-caption")
+            step_choice = ui.toggle(
+                {s: f"{s:g}" for s in steps}, value=step if step in steps else steps[0]
+            ).props(
+                # Quasar's colour classes win over app CSS (cascade layers): set them here
+                "dense no-caps unelevated color=transparent text-color=grey-7 "
+                "toggle-color=white toggle-text-color=dark"
+            ).classes("step-toggle font-mono")
             if hint:
-                ui.icon("info_outline").classes("sig-hint").tooltip(hint)
+                ui.icon("info_outline").classes("sig-hint").tooltip(
+                    f"{hint} − / + and Up / Down in the field change it by one step, "
+                    "with Shift by ten steps."
+                )
+        ui.element("div").classes("sig-presets")
 
         def show(v: float) -> None:
             current[0] = v
             num.value = round(v, decimals)
-            disp.set_text(_fmt_value(v, decimals))
 
         def apply(val) -> None:
             if syncing:
@@ -182,9 +198,12 @@ def counter_spn(
                 v = float(val)
             except (TypeError, ValueError):
                 return
-            v = max(0.0, min(max_v, v))
+            v = max(0.0, min(max_v, round(v, decimals)))
             show(v)
             on_change(v)
+
+        def bump(direction: int, shift: bool = False) -> None:
+            apply(current[0] + direction * float(step_choice.value) * (10 if shift else 1))
 
         def sync(val: float) -> None:
             """Reflect a value changed outside the UI without calling on_change."""
@@ -195,8 +214,31 @@ def counter_spn(
             finally:
                 syncing = False
 
+        minus.on("click", lambda e: bump(-1, bool(e.args.get("shiftKey"))), ["shiftKey"])
+        plus.on("click", lambda e: bump(1, bool(e.args.get("shiftKey"))), ["shiftKey"])
+        num.on(
+            "keydown",
+            lambda e: bump(int(e.args["dir"]), bool(e.args["shift"])),
+            js_handler=_STEP_KEYS_JS,
+        )
         num.on_value_change(lambda e: apply(e.value))
     return sync
+
+
+def derived_spn(
+    spn: str, name: str, unit: str, initial: float, decimals: int, source: str, hint: str
+) -> Callable[[float], None]:
+    """A read-only SPN that follows another one: muted row, no input. Returns its setter."""
+    with ui.element("div").classes("signal-box sig-row derived"):
+        _signal_label(spn, name)
+        with ui.element("div").classes("sig-value derived-value font-mono"):
+            disp = ui.label(_fmt_value(float(initial), decimals))
+            ui.label(unit).classes("signal-unit")
+        with ui.element("div").classes("sig-controls"):
+            ui.label(f"derived from {source}").classes("derived-caption")
+            ui.icon("info_outline").classes("sig-hint").tooltip(hint)
+        ui.element("div").classes("sig-presets")
+    return lambda v: disp.set_text(_fmt_value(float(v), decimals))
 
 
 def pgn_header(
@@ -209,7 +251,8 @@ def pgn_header(
     session,
     key: str,
 ) -> tuple[Any, Any]:
-    """One-line group header (acronym, name, PGN, ON/OFF, Details) and its collapsible panel.
+    """One-line group header (acronym, name · PGN · cycle, ON/OFF switch, chevron) and its
+    collapsible details panel.
 
     ON/OFF switches the broadcast while running (fault injection: the ELD stops getting the
     PGN). Returns (details panel, header badge slot) so callers can add more details (payload)
@@ -220,37 +263,41 @@ def pgn_header(
         with ui.element("div").classes("pgn-title-group"):
             ui.label(acronym).classes("badge-acronym font-mono")
             ui.label(title).classes("pgn-name").tooltip(title)
-            ui.label(f"PGN {pgn}").classes("pgn-number font-mono")
+            ui.label(f"· PGN {pgn}").classes("pgn-meta font-mono")
+            cycle_label = ui.label(f"· {cycle_ms} ms").classes("pgn-meta font-mono")
         with ui.element("div").classes("pgn-header-right"):
             badges = ui.element("div").classes("pgn-badges")
             with badges:
                 spn_fault_chip(sig, key)
-            # Starts as "enabled" in the config; click to switch the broadcast while running.
+            # Starts as "enabled" in the config; switch the broadcast, also while running.
             # Requests for the PGN are still answered (see the Faults tab for that).
-            state_btn = ui.label().classes("pgn-state pgn-toggle").tooltip(
-                "Cyclic broadcast on / off. Click to switch, also while running: off means the "
-                "ELD stops receiving this PGN. Requests for it are still answered."
+            state_switch = ui.switch(value=pgn_enabled(sig, key)).props("dense color=positive").classes(
+                "pgn-switch"
+            ).tooltip(
+                "Cyclic broadcast on / off, also while running: off means the ELD stops "
+                "receiving this PGN. Requests for it are still answered."
             )
-            shown: list[bool | None] = [None]
 
             def paint_state() -> None:
                 on = pgn_enabled(sig, key)
-                if shown[0] is on:
-                    return
-                shown[0] = on
-                state_btn.set_text("● ON" if on else "○ OFF")
-                state_btn.classes(remove="on off", add="on" if on else "off")
+                if state_switch.value is not on:
+                    state_switch.value = on
+                text = "ON" if on else "OFF"
+                if state_switch.text != text:
+                    state_switch.text = text
+                    state_switch.classes(remove="on off", add="on" if on else "off")
 
-            def toggle_state() -> None:
-                session.set_pgn_enabled(key, not pgn_enabled(sig, key))
+            def switch_state(e) -> None:
+                if bool(e.value) != pgn_enabled(sig, key):
+                    session.set_pgn_enabled(key, bool(e.value))
                 paint_state()
 
-            state_btn.on("click", toggle_state)
+            state_switch.on_value_change(switch_state)
             paint_state()
-            ui.timer(0.5, paint_state)
-            details_btn = ui.button("Details", icon="expand_more").classes(
+            ui.timer(0.5, paint_state)  # follows the Faults tab, a scenario, another tab
+            details_btn = ui.button(icon="expand_more", color=None).classes(
                 "details-btn"
-            ).props("flat dense no-caps")
+            ).props("flat round dense").tooltip("Details: CAN ID, cycle, payload")
 
     details = ui.element("div").classes("pgn-details")
     with details:
@@ -272,6 +319,7 @@ def pgn_header(
                         return
                     ms = max(1, min(60000, ms))
                     cycle_input.value = ms
+                    cycle_label.set_text(f"· {ms} ms")
                     on_cycle(ms)
 
                 cycle_input.on_value_change(apply_cycle)
@@ -280,7 +328,10 @@ def pgn_header(
     def toggle_details() -> None:
         shown = not details.visible
         details.set_visibility(shown)
-        details_btn.props(f"icon={'expand_less' if shown else 'expand_more'}")
+        if shown:
+            details_btn.classes(add="open")
+        else:
+            details_btn.classes(remove="open")
 
     details_btn.on_click(toggle_details)
     return details, badges
@@ -503,18 +554,12 @@ def build_tco1(session, payload_labels: dict) -> None:
                 sig, "ENGINE OFF · 0 mph",
                 "Engine off: sending 0 mph. The CCVS speed is used once the engine runs.",
             )
-        with ui.element("div").classes("signal-box sig-row"):
-            _signal_label("SPN 1624", "Tachograph Vehicle Speed")
-            disp = _signal_value("mph", sig.spn84_speed_mph, 1)
-            with ui.element("div").classes("sig-controls"):
-                ui.icon("info_outline").classes("sig-hint").tooltip(
-                    "The CCVS speed (SPN 84), plus SPN 1611 vehicle motion; change it on the "
-                    "CCVS card. For ELDs that read tachograph speed instead of wheel-based speed."
-                )
-        follow_value(
-            sig, "spn84_speed_mph", lambda v: disp.set_text(_fmt_value(v, 1)),
-            payload_labels["tco1"], encode_tco1,
+        show_speed = derived_spn(
+            "SPN 1624", "Tachograph Vehicle Speed", "mph", sig.spn84_speed_mph, 1, "SPN 84",
+            "The CCVS speed (SPN 84), plus SPN 1611 vehicle motion; change it on the CCVS "
+            "card. For ELDs that read tachograph speed instead of wheel-based speed.",
         )
+        follow_value(sig, "spn84_speed_mph", show_speed, payload_labels["tco1"], encode_tco1)
 
 
 def build_vd(session, payload_labels: dict) -> None:
@@ -534,7 +579,7 @@ def build_vd(session, payload_labels: dict) -> None:
             payload_labels["vd"] = payload_strip(6, payload_hex(encode_vd(sig)))
         sync_odo = counter_spn(
             "SPN 245", "Total Vehicle Distance", "mi", sig.spn245_total_mi, 999999, 1,
-            _bind(sig, "spn245_total_mi"), steps=(10, 100, 1000),
+            _bind(sig, "spn245_total_mi"), step=10,
             hint="Adds miles automatically while the ECU is running, based on Wheel-Based Vehicle Speed.",
         )
         follow_meter(sig, "spn245_total_mi", sync_odo, payload_labels["vd"], encode_vd, 0.05)
@@ -555,16 +600,12 @@ def build_hrvd(session, payload_labels: dict) -> None:
         )
         with details:
             payload_labels["hrvd"] = payload_strip(6, payload_hex(encode_hrvd(sig)))
-        with ui.element("div").classes("signal-box sig-row"):
-            _signal_label("SPN 917", "High Resolution Total Vehicle Distance")
-            disp = _signal_value("mi", sig.spn245_total_mi, 3)
-            with ui.element("div").classes("sig-controls"):
-                ui.icon("info_outline").classes("sig-hint").tooltip(
-                    "The VD odometer (SPN 245) at 5 m resolution; change it on the VD card."
-                )
+        show_distance = derived_spn(
+            "SPN 917", "High Resolution Total Vehicle Distance", "mi", sig.spn245_total_mi, 3,
+            "SPN 245", "The VD odometer (SPN 245) at 5 m resolution; change it on the VD card.",
+        )
         follow_meter(
-            sig, "spn245_total_mi", lambda v: disp.set_text(_fmt_value(v, 3)),
-            payload_labels["hrvd"], encode_hrvd, 0.003,
+            sig, "spn245_total_mi", show_distance, payload_labels["hrvd"], encode_hrvd, 0.003
         )
 
 
@@ -585,7 +626,7 @@ def build_hours(session, payload_labels: dict) -> None:
             payload_labels["hours"] = payload_strip(6, payload_hex(encode_hours(sig)))
         sync_hours = counter_spn(
             "SPN 247", "Engine Total Hours of Operation", "h", sig.spn247_engine_hours, 99999, 2,
-            _bind(sig, "spn247_engine_hours"), steps=(1, 10, 100),
+            _bind(sig, "spn247_engine_hours"), step=1,
             hint="Counts up automatically while the ECU is running and Engine Speed > 0 rpm.",
         )
         follow_meter(sig, "spn247_engine_hours", sync_hours, payload_labels["hours"], encode_hours, 0.005)
