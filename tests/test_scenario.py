@@ -21,6 +21,7 @@ from j1939_emulator.scenario import (
     parse_duration,
     parse_scenario,
 )
+from waits import wait_until
 
 _ids = itertools.count()
 
@@ -141,13 +142,15 @@ def test_ramp_reaches_the_wire_smoothly(bench):
     runner = ScenarioRunner(session)
     s = parse_scenario({"name": "ramp", "step": [
         {"at": 0, "ignition": "run"},
-        {"at": "100ms", "ramp": {"speed_mph": 40, "rpm": 1500, "over": "1s"}},
+        {"at": "100ms", "ramp": {"speed_mph": 40, "rpm": 1500, "over": "2s"}},  # ~20 CCVS frames
     ]})
     while eld.recv(0):
         pass
     runner.start(s)
-    speeds, end = [], time.time() + 1.6
-    while time.time() < end:
+    speeds, end = [], time.time() + 5.0
+    while time.time() < end:  # until the ramp is over and its last value has gone out
+        if not runner.active:
+            end = min(end, time.time() + 0.3)
         m = eld.recv(0.02)
         if m is not None and m.arbitration_id == CAN_ID_CCVS:
             speeds.append(int.from_bytes(m.data[1:3], "little") / 256 / 1.609344)
@@ -165,12 +168,11 @@ def test_steps_apply_faults_and_clear_them_at_the_end(bench):
     s = parse_scenario({"step": [
         {"at": 0, "fault": {"ccvs": False, "spn84": "not_available", "freeze_odometer": True}},
         {"at": "300ms", "odometer_add_mi": 100, "dtc": {"spn110_fmi3": True}},
-        {"at": "400ms", "note": "end"},
+        {"at": "1s", "note": "end"},
     ]})
     odo = session.signals.spn245_total_mi
     runner.start(s)
-    time.sleep(0.15)
-    assert session.signals.ccvs_enabled is False
+    assert wait_until(lambda: session.signals.ccvs_enabled is False, timeout=0.9)
     assert session.signals.spn_override["spn84"] == SPN_NOT_AVAILABLE
     _wait(runner)
     assert runner.state is RunState.FINISHED
@@ -188,9 +190,9 @@ def test_pause_holds_the_clock_and_stop_ends(bench):
     runner = ScenarioRunner(session)
     runner.start(parse_scenario({"step": [
         {"at": 0, "fault": {"silent": True}},
-        {"at": "600ms", "speed_mph": 20},
+        {"at": "2s", "speed_mph": 20},
     ]}))
-    time.sleep(0.2)
+    assert wait_until(lambda: session.faults.silent, timeout=1.5)
     runner.pause()
     held = runner.elapsed()
     time.sleep(0.6)
@@ -222,9 +224,6 @@ def test_truck_change_restores_vin(bench):
         {"at": 0, "vin": "3AKJHHDR1LSLA4213"},
         {"at": "1s", "note": "end"},
     ]}))
-    end = time.time() + 0.9  # wait for step 1, not a fixed time: CI runners can be slow
-    while session.identity.vin != "3AKJHHDR1LSLA4213" and time.time() < end:
-        time.sleep(0.02)
-    assert session.identity.vin == "3AKJHHDR1LSLA4213"
+    assert wait_until(lambda: session.identity.vin == "3AKJHHDR1LSLA4213", timeout=0.9)
     _wait(runner)
     assert session.identity.vin == before

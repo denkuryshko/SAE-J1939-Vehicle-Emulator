@@ -31,6 +31,7 @@ from j1939_emulator.pgn import (
     encode_tco1,
     encode_vd,
 )
+from waits import wait_until
 
 
 def test_split_id_pdu1_and_pdu2():
@@ -77,16 +78,20 @@ def test_session_trace_shows_request_and_reply():
     eld = can.Bus(interface="virtual", channel="trace")
     session = EmulatorSession(mode=EmulationMode.VIRTUAL)
     session.start(ch)
+    def after_request():
+        lines = session.trace.recent()[1]
+        request = next((i for i, l in enumerate(lines) if "RX   18EA00F9" in l), None)
+        return "" if request is None else "\n".join(lines[request:])
+
     try:
         time.sleep(0.4)
         eld.send(can.Message(arbitration_id=0x18EA00F9, is_extended_id=True, data=[0xEC, 0xFE, 0x00]))
-        time.sleep(0.5)
+        wait_until(lambda: "'1HTMMAAL5GH123456*'" in after_request())  # the whole VIN reply
     finally:
         session.stop()
         eld.shutdown()
     _count, lines = session.trace.recent()
-    request = next(i for i, l in enumerate(lines) if "RX   18EA00F9" in l)
-    after = "\n".join(lines[request:])
+    after = after_request()
     assert "TP.CM BAM: 18 bytes in 3 packets, PGN 65260" in after
     assert "request from 0xF9 to 0x00 for PGN 65260 (VI (VIN)): answered" in after
     assert "'1HTMMAAL5GH123456*'" in after
@@ -130,10 +135,14 @@ def test_session_traffic_includes_cyclic_and_requests():
     eld = can.Bus(interface="virtual", channel="traffic")
     session = EmulatorSession(mode=EmulationMode.VIRTUAL)
     session.start(ch)
+    def reply_seen():
+        kinds = [(e.direction, e.kind) for e in session.trace.traffic_since(0)[1]]
+        return ("RX", "REQUEST") in kinds and ("TX", "TP.CM BAM") in kinds[kinds.index(("RX", "REQUEST")):]
+
     try:
         time.sleep(0.4)
         eld.send(can.Message(arbitration_id=0x18EA00F9, is_extended_id=True, data=[0xEC, 0xFE, 0x00]))
-        time.sleep(0.5)
+        wait_until(reply_seen)
     finally:
         session.stop()
         eld.shutdown()
