@@ -59,6 +59,7 @@ from j1939_emulator.pgn import (
     CAN_ID_EEC1,
     CAN_ID_HOURS,
     CAN_ID_HRVD,
+    CAN_ID_TCO1,
     CAN_ID_VD,
     OVERRIDABLE_SPNS,
     SPN_NORMAL,
@@ -68,6 +69,7 @@ from j1939_emulator.pgn import (
     encode_eec1,
     encode_hours,
     encode_hrvd,
+    encode_tco1,
     encode_vd,
 )
 
@@ -86,6 +88,7 @@ _ACK_CONTROL_NACK = 0x01
 _REQUESTABLE: dict[int, tuple[int, Callable[[SignalState], bytes]]] = {
     61444: (3, encode_eec1),
     65265: (6, encode_ccvs),
+    65132: (3, encode_tco1),
     65248: (6, encode_vd),
     65217: (6, encode_hrvd),
     65253: (6, encode_hours),
@@ -101,6 +104,7 @@ _PGN_NAMES = {
     PGN_VI: "VI (VIN)",
     61444: "EEC1",
     65265: "CCVS",
+    65132: "TCO1",
     65248: "VD",
     65217: "HRVD",
     65253: "HOURS",
@@ -723,7 +727,7 @@ class EmulatorSession:
         self.note(f"FAULT {text}")
 
     def set_pgn_enabled(self, key: str, enabled: bool) -> None:
-        """Switch a cyclic broadcast (eec1, ccvs, vd, hours) on or off while running."""
+        """Switch a cyclic broadcast (eec1, ccvs, tco1, vd, hrvd, hours) on or off while running."""
         if key not in BROADCAST_PGNS:
             raise KeyError(f"Unknown PGN key: {key}")
         enabled = bool(enabled)
@@ -872,7 +876,9 @@ class EmulatorSession:
             f"channel={channel.label!r} interface={channel.interface} bitrate={self.bitrate}",
             f"ECU SA=0x{ident.source_address:02X} NAME={ident.name_hex} VIN={ident.vin}",
             "Logged: frames from other nodes, everything this ECU sends except the cyclic "
-            "EEC1/CCVS/VD/HRVD/HOURS broadcasts, how each request was answered, bus errors.",
+            "EEC1/VD/HRVD/HOURS broadcasts, how each request was answered, bus errors.",
+            "Vehicle speed broadcasts (CCVS, TCO1) are logged when the value changes "
+            "(at most once a second) and every 10 s while it stays the same.",
             "TX! = send failed. Times are PC clock; delta is the gap to the previous line.",
         ]
 
@@ -1192,6 +1198,8 @@ class EmulatorSession:
              lambda: s.eec1_enabled and not f.silent),
             (CAN_ID_CCVS, self._ms(lambda: s.cycle_ccvs_ms), lambda: encode_ccvs(s),
              lambda: s.ccvs_enabled and not f.silent),
+            (CAN_ID_TCO1, self._ms(lambda: s.cycle_tco1_ms), lambda: encode_tco1(s),
+             lambda: s.tco1_enabled and not f.silent),
             (CAN_ID_VD, self._ms(lambda: s.cycle_vd_ms), lambda: encode_vd(s),
              lambda: s.vd_enabled and not f.silent),
             (CAN_ID_HRVD, self._ms(lambda: s.cycle_hrvd_ms), lambda: encode_hrvd(s),
@@ -1244,6 +1252,8 @@ class EmulatorSession:
                 hz += 1000.0 / max(1, s.cycle_eec1_ms)
             if s.ccvs_enabled:
                 hz += 1000.0 / max(1, s.cycle_ccvs_ms)
+            if s.tco1_enabled:
+                hz += 1000.0 / max(1, s.cycle_tco1_ms)
             if s.vd_enabled:
                 hz += 1000.0 / max(1, s.cycle_vd_ms)
             if s.hrvd_enabled:

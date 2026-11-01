@@ -220,9 +220,11 @@ def test_truck_change_restores_vin(bench):
     runner = ScenarioRunner(session)
     runner.start(parse_scenario({"restore_vin_on_end": True, "step": [
         {"at": 0, "vin": "3AKJHHDR1LSLA4213"},
-        {"at": "200ms", "note": "end"},
+        {"at": "1s", "note": "end"},
     ]}))
-    time.sleep(0.1)
+    end = time.time() + 0.9  # wait for step 1, not a fixed time: CI runners can be slow
+    while session.identity.vin != "3AKJHHDR1LSLA4213" and time.time() < end:
+        time.sleep(0.02)
     assert session.identity.vin == "3AKJHHDR1LSLA4213"
     _wait(runner)
     assert session.identity.vin == before

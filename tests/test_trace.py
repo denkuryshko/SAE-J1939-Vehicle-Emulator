@@ -2,6 +2,8 @@ import time
 
 import can
 
+from j1939_emulator.bus import trace as trace_mod
+
 from j1939_emulator.bus.detect import DetectedChannel, EmulationMode
 from j1939_emulator.bus.session import EmulatorSession
 from j1939_emulator.bus.trace import (
@@ -19,12 +21,14 @@ from j1939_emulator.pgn import (
     CAN_ID_EEC1,
     CAN_ID_HOURS,
     CAN_ID_HRVD,
+    CAN_ID_TCO1,
     CAN_ID_VD,
     SignalState,
     encode_ccvs,
     encode_eec1,
     encode_hours,
     encode_hrvd,
+    encode_tco1,
     encode_vd,
 )
 
@@ -195,3 +199,37 @@ def test_export_candump(tmp_path):
     assert lines[1].endswith(" can0 18EA00F9#ECFE00")
     assert lines[0].startswith("(") and ") can0 " in lines[0]
     trace.close("STOP")
+
+
+def test_decode_tco1():
+    s = SignalState(spn84_speed_mph=60)
+    assert decode(CAN_ID_TCO1, encode_tco1(s)) == (
+        "SPN 1624 Tachograph Speed: 60 mph (96.56 km/h); SPN 1611 motion: yes"
+    )
+
+
+def test_speed_broadcasts_sampled_into_the_file(tmp_path, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(trace_mod.time, "time", lambda: now[0])
+    trace = J1939Trace(0x00, ["header"], directory=tmp_path)
+    s = SignalState()
+
+    def tick(dt):
+        now[0] += dt
+        trace.broadcast(CAN_ID_CCVS, encode_ccvs(s), ok=True)
+        trace.broadcast(CAN_ID_EEC1, encode_eec1(s), ok=True)
+
+    tick(0)  # first frame: written
+    tick(0.1)  # same value, too soon
+    s.spn84_speed_mph = 30
+    tick(0.1)  # changed, but within 1 s of the last line: waits
+    tick(1.0)  # changed vs. the last line written: written
+    for _ in range(50):
+        tick(0.1)  # unchanged for 5 s: nothing
+    tick(5.0)  # 10 s heartbeat
+    trace.close()
+    lines = [ln for ln in trace.path.read_text(encoding="utf-8").splitlines() if "18FEF100" in ln]
+    sent = [ln.split("Wheel-Based Speed: ")[1].split(" mph")[0] for ln in lines]
+    assert sent == ["0", "30", "30"]
+    assert all("[cyclic CCVS, sampled]" in ln for ln in lines)
+    assert "0CF00400" not in trace.path.read_text(encoding="utf-8")

@@ -17,7 +17,7 @@ def _write(tmp_path, text):
     return p
 
 
-@pytest.mark.parametrize("name", ["examples/ecu.toml", "my_ecu.toml"])
+@pytest.mark.parametrize("name", ["examples/ecu.toml", "my_ecu.example.toml"])
 def test_shipped_configs_load(name):
     cfg = load_config(ROOT / name)
     assert cfg.identity.name == 0x1000000000000000
@@ -120,3 +120,10 @@ def test_dtc_flags_old_and_new(tmp_path):
         load_config(_write(tmp_path, BUS + "[[diagnostics.dtc]]\nspn = 1\nfmi = 1\nlmap = 1\n"))
     with pytest.raises(ValueError, match="dtc #1: DTC lamp"):
         load_config(_write(tmp_path, BUS + "[[diagnostics.dtc]]\nspn = 1\nfmi = 1\nlamp = \"x\"\n"))
+
+
+def test_tco1_section_switches_and_times_the_broadcast(tmp_path):
+    assert load_config(_write(tmp_path, BUS)).signals.tco1_enabled
+    cfg = load_config(_write(tmp_path, BUS + "[pgn.tco1]\nenabled = false\ncycle_ms = 100\n"))
+    assert not cfg.signals.tco1_enabled
+    assert cfg.signals.cycle_tco1_ms == 100

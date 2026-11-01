@@ -26,3 +26,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# --- Local config (run_gui.bat creates it from my_ecu.example.toml) ---
+my_ecu.toml

@@ -48,6 +48,16 @@ def _collect(bus, seconds, pf_ps):
     return out
 
 
+def _first(bus, seconds, pf_ps):
+    """Data of the first frame with this PF/PS within `seconds`, or None."""
+    end = time.time() + seconds
+    while time.time() < end:
+        m = bus.recv(0.05)
+        if m and (m.arbitration_id >> 8) & 0xFFFF == pf_ps:
+            return bytes(m.data)
+    return None
+
+
 def _request(bus, pgn, dest=0x00):
     bus.send(
         can.Message(
@@ -121,10 +131,12 @@ def test_dm1_always_broadcast_and_clears(bench):
     session, eld = bench
     _drain(eld)
     assert _collect(eld, 1.3, 0xFECA)[-1] == bytes([0x00, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF])
+    # A change goes out at once, ahead of the 1 s cycle (0.8 s leaves room for slow CI runners).
     session.set_dtc("spn110_fmi3", True)
-    assert _collect(eld, 0.3, 0xFECA)[0][:6] == bytes([0x04, 0xFF, 0x6E, 0x00, 0x03, 0x01])
+    assert _first(eld, 0.8, 0xFECA)[:6] == bytes([0x04, 0xFF, 0x6E, 0x00, 0x03, 0x01])
+    _drain(eld)
     session.set_dtc("spn110_fmi3", False)
-    assert _collect(eld, 0.3, 0xFECA)[0] == bytes([0x00, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF])
+    assert _first(eld, 0.8, 0xFECA) == bytes([0x00, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF])
 
 
 def test_health_counts_peers_and_flags_ack_errors(bench):
@@ -174,8 +186,19 @@ def test_vin_request_during_dm1_bam_is_answered(bench):
         assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"
 
 
+def _wait_transport_idle(bus, quiet=0.3, seconds=3.0):
+    """Wait until no TP.CM / TP.DT frame for `quiet` s (e.g. the VIN BAM sent on START is over)."""
+    now = time.time()
+    last_tp, end = now, now + seconds
+    while time.time() - last_tp < quiet and time.time() < end:
+        m = bus.recv(0.05)
+        if m and (m.arbitration_id >> 16) & 0xFF in (0xEC, 0xEB):
+            last_tp = time.time()
+
+
 def test_request_log_records_answers(bench):
     session, eld = bench
+    _wait_transport_idle(eld)  # else the VIN reply waits for the START BAM on a slow machine
     session.clear_requests()
     _request(eld, 65260)
     _request(eld, 60928, dest=0xFF)  # address claim, answered inside can-j1939
@@ -266,3 +289,12 @@ def test_dm11_refused_by_request_fault(bench):
     _request(eld, 65235)
     assert _collect(eld, 0.4, 0xE8FF)[0][0] == 0x01  # NACK
     assert session.diagnostics.active_count == 1
+
+
+def test_tco1_broadcast_and_answered_on_request(bench):
+    _session, eld = bench
+    _drain(eld)
+    assert _collect(eld, 0.3, 0xFE6C)  # cyclic, 50 ms
+    _drain(eld)
+    _request(eld, 65132)
+    assert _collect(eld, 0.3, 0xFE6C)

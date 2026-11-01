@@ -44,6 +44,10 @@ enabled = true
 cycle_ms = 100
 spn84_speed_mph = 0
 
+[pgn.tco1]
+enabled = true
+cycle_ms = 50
+
 [pgn.vd]
 enabled = true
 cycle_ms = 1000

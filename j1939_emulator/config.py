@@ -73,6 +73,7 @@ def load_config(path: str | Path) -> AppConfig:
     signals = SignalState()
     _apply_pgn(signals, raw.get("pgn", {}).get("eec1"), "eec1")
     _apply_pgn(signals, raw.get("pgn", {}).get("ccvs"), "ccvs")
+    _apply_pgn(signals, raw.get("pgn", {}).get("tco1"), "tco1")
     _apply_pgn(signals, raw.get("pgn", {}).get("vd"), "vd")
     _apply_pgn(signals, raw.get("pgn", {}).get("hrvd"), "hrvd")
     _apply_pgn(signals, raw.get("pgn", {}).get("hours"), "hours")
@@ -203,6 +204,11 @@ def _apply_pgn(signals: SignalState, section: dict | None, name: str) -> None:
             signals.spn84_speed_mph = float(section["spn84_speed_mph"])
         if "cycle_ms" in section:
             signals.cycle_ccvs_ms = int(section["cycle_ms"])
+    elif name == "tco1":
+        # No value of its own: TCO1 sends the [pgn.ccvs] speed.
+        signals.tco1_enabled = enabled
+        if "cycle_ms" in section:
+            signals.cycle_tco1_ms = int(section["cycle_ms"])
     elif name == "vd":
         signals.vd_enabled = enabled
         # spn917_total_mi: pre-2.0 key name, still accepted
