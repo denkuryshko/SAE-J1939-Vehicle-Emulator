@@ -5,6 +5,21 @@ It simulates engine speed, vehicle speed, odometer, engine hours, VIN, address c
 
 Built with **python-can**, **can-j1939** and **NiceGUI**.
 
+![Signals tab: live PGNs and SPNs, with the requests and J1939 trace panel on the right](docs/screenshots/signals_main.png)
+
+<table>
+  <tr>
+    <td width="33%"><a href="docs/screenshots/ecu_vehicle.png"><img src="docs/screenshots/ecu_vehicle.png" alt="ECU and Vehicle tab: VIN and J1939-81 NAME"></a></td>
+    <td width="33%"><a href="docs/screenshots/dtc.png"><img src="docs/screenshots/dtc.png" alt="Diagnostics tab: DM1 fault injection"></a></td>
+    <td width="33%"><a href="docs/screenshots/traffic.png"><img src="docs/screenshots/traffic.png" alt="Traffic tab: decoded frames on the bus"></a></td>
+  </tr>
+  <tr>
+    <td align="center">ECU &amp; Vehicle (VIN)</td>
+    <td align="center">Diagnostics (DM1)</td>
+    <td align="center">Traffic monitor</td>
+  </tr>
+</table>
+
 **Requirements:** Python **3.11+** · Windows, Linux or macOS · a browser for the GUI (Chrome, Edge or Safari)
 
 > **Bench use only.** The emulator transmits as the engine ECU (source address `0x00`). Do not connect it to the CAN bus of a real vehicle: it would conflict with the vehicle's own ECUs and can disturb their operation. Provided as is, without warranty (see [LICENSE](LICENSE)).
