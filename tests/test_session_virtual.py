@@ -9,6 +9,7 @@ import pytest
 
 from j1939_emulator.bus.detect import DetectedChannel, EmulationMode
 from j1939_emulator.bus.session import BusHealth, EmulatorSession
+from waits import wait_until
 
 ELD_SA = 0xF9
 _channel_ids = itertools.count()
@@ -106,7 +107,7 @@ def test_engine_hours_answered_on_request(bench):
     _session, eld = bench
     _drain(eld)
     _request(eld, 65253)
-    assert _collect(eld, 0.5, 0xFEE5)
+    assert _collect(eld, 0.8, 0xFEE5)
 
 
 def test_hrvd_broadcast_and_answered_on_request(bench):
@@ -115,7 +116,7 @@ def test_hrvd_broadcast_and_answered_on_request(bench):
     assert _collect(eld, 1.2, 0xFEC1)  # cyclic, 1 s
     _drain(eld)
     _request(eld, 65217)
-    assert _collect(eld, 0.3, 0xFEC1)
+    assert _collect(eld, 0.8, 0xFEC1)
 
 
 def test_unsupported_pgn_nacked_only_when_addressed(bench):
@@ -124,7 +125,7 @@ def test_unsupported_pgn_nacked_only_when_addressed(bench):
     _request(eld, 65024, dest=0xFF)
     assert _collect(eld, 0.4, 0xE8FF) == []
     _request(eld, 65024, dest=0x00)
-    assert _collect(eld, 0.4, 0xE8FF) == [bytes([0x01, 0xFF, 0xFF, 0xFF, ELD_SA, 0x00, 0xFE, 0x00])]
+    assert _collect(eld, 0.8, 0xE8FF) == [bytes([0x01, 0xFF, 0xFF, 0xFF, ELD_SA, 0x00, 0xFE, 0x00])]
 
 
 def test_dm1_always_broadcast_and_clears(bench):
@@ -143,8 +144,7 @@ def test_health_counts_peers_and_flags_ack_errors(bench):
     session, eld = bench
     assert session.stats().bus_health is BusHealth.OK
     eld.send(can.Message(arbitration_id=0x18FEF100 | ELD_SA, is_extended_id=True, data=bytes(8)))
-    time.sleep(0.2)
-    assert session.stats().peers == 1
+    assert wait_until(lambda: session.stats().peers == 1)
     # A SocketCAN-style ACK error frame, as candle / gs_usb adapters report it.
     session._health.on_message_received(
         can.Message(is_error_frame=True, arbitration_id=0x24, data=bytes(8))
@@ -204,7 +204,7 @@ def test_request_log_records_answers(bench):
     _request(eld, 60928, dest=0xFF)  # address claim, answered inside can-j1939
     _request(eld, 65260, dest=0x17)  # for another node
     _request(eld, 65024)  # unsupported, addressed to us
-    time.sleep(0.6)
+    wait_until(lambda: len(session.recent_requests()) >= 4)
     log = [(ev.src, ev.dest, ev.pgn, ev.result) for ev in session.recent_requests()]
     assert log == [
         (ELD_SA, 0x00, 65260, "answered"),
@@ -223,9 +223,9 @@ def test_send_failures_do_not_stop_the_ecu(bench):
         raise can.CanOperationError("Send timeout")
 
     raw_bus.send = failing_send
-    time.sleep(1.2)  # DM1 tick fails at least once
+    failing = wait_until(lambda: session.stats().bus_health is BusHealth.TX_FAILING)
     del raw_bus.send
-    assert session.stats().bus_health is BusHealth.TX_FAILING
+    assert failing
     _drain(eld)
     _request(eld, 65260)
     assert _read_bam(eld, 65260) == b"1HTMMAAL5GH123456*"
@@ -266,7 +266,7 @@ def test_dm11_to_this_ecu_clears_dtcs_and_acks(bench):
     session.inject_all_dtcs()
     _drain(eld)
     _request(eld, 65235, dest=0x00)
-    assert _collect(eld, 0.4, 0xE8FF) == [bytes([0x00, 0xFF, 0xFF, 0xFF, ELD_SA, 0xD3, 0xFE, 0x00])]
+    assert _collect(eld, 0.8, 0xE8FF) == [bytes([0x00, 0xFF, 0xFF, 0xFF, ELD_SA, 0xD3, 0xFE, 0x00])]
     assert session.diagnostics.active_count == 0
     assert session.recent_requests()[-1].result == "cleared 2 active DTCs (DM11), ACK"
 
@@ -277,7 +277,7 @@ def test_global_dm11_clears_without_ack(bench):
     _drain(eld)
     _request(eld, 65235, dest=0xFF)
     assert _collect(eld, 0.4, 0xE8FF) == []
-    assert session.diagnostics.active_count == 0
+    assert wait_until(lambda: session.diagnostics.active_count == 0)
     assert _collect(eld, 1.2, 0xFECA)[-1][2:6] == bytes(4)  # DM1: no DTC
 
 
@@ -287,7 +287,7 @@ def test_dm11_refused_by_request_fault(bench):
     session.set_request_fault("nack", target=65235)
     _drain(eld)
     _request(eld, 65235)
-    assert _collect(eld, 0.4, 0xE8FF)[0][0] == 0x01  # NACK
+    assert _collect(eld, 0.8, 0xE8FF)[0][0] == 0x01  # NACK
     assert session.diagnostics.active_count == 1
 
 

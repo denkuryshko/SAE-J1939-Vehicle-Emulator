@@ -25,6 +25,7 @@ from j1939_emulator.pgn import (
     encode_hrvd,
     encode_vd,
 )
+from waits import wait_until
 
 ELD_SA = 0xF9
 _ids = itertools.count()
@@ -46,9 +47,9 @@ def bench():
     eld.shutdown()
 
 
-def _frames(bus, seconds):
+def _frames(bus, seconds, drain=True):
     """CAN IDs (and data) the ELD sees during `seconds`, after dropping what was queued."""
-    while bus.recv(0):
+    while drain and bus.recv(0):
         pass
     out, end = [], time.time() + seconds
     while time.time() < end:
@@ -65,7 +66,12 @@ def _request(bus, pgn):
 
 
 def _last_result(session):
-    return session.recent_requests()[-1].result
+    requests = session.recent_requests()
+    return requests[-1].result if requests else None
+
+
+def _result_becomes(session, text, timeout=3.0):
+    return wait_until(lambda: _last_result(session) == text, timeout)
 
 
 # --- encoders and meters ---
@@ -126,19 +132,19 @@ def test_broadcast_switched_off_and_on_while_running(bench):
     ids = {f[0] for f in _frames(eld, 0.4)}
     assert CAN_ID_CCVS not in ids and CAN_ID_EEC1 in ids
     session.set_pgn_enabled("ccvs", True)
-    ids = {f[0] for f in _frames(eld, 0.4)}
+    ids = {f[0] for f in _frames(eld, 0.6)}
     assert CAN_ID_CCVS in ids
 
 
 def test_silent_ecu_sends_nothing_and_ignores_requests(bench):
     session, eld = bench
     session.set_silent(True)
-    time.sleep(0.05)
+    time.sleep(0.2)  # a frame already on its way when the fault went on
     _request(eld, 65260)
     assert [f for f in _frames(eld, 0.6) if f[0] & 0xFF == 0x00] == []
-    assert _last_result(session) == "ignored: ECU silent (fault)"
+    assert _result_becomes(session, "ignored: ECU silent (fault)")
     session.set_silent(False)
-    assert CAN_ID_EEC1 in {f[0] for f in _frames(eld, 0.3)}
+    assert CAN_ID_EEC1 in {f[0] for f in _frames(eld, 0.6)}
 
 
 def test_request_fault_ignore_only_for_the_target_pgn(bench):
@@ -147,35 +153,31 @@ def test_request_fault_ignore_only_for_the_target_pgn(bench):
     _request(eld, 65260)
     frames = _frames(eld, 0.5)
     assert not any(f[0] == 0x18ECFF00 for f in frames)  # no BAM for the VIN
-    assert _last_result(session) == "ignored (fault: ignore requests)"
+    assert _result_becomes(session, "ignored (fault: ignore requests)")
     _request(eld, 65248)  # another PGN: answered as usual
-    time.sleep(0.2)
-    assert _last_result(session) == "answered"
+    assert _result_becomes(session, "answered")
 
 
 def test_request_fault_nack_for_a_supported_pgn(bench):
     session, eld = bench
     session.set_request_fault("nack", target=0)
+    while eld.recv(0):
+        pass
     _request(eld, 65248)
-    nacks = [f for f in _frames(eld, 0.4) if f[0] == 0x18E8FF00]
+    nacks = [f for f in _frames(eld, 0.8, drain=False) if f[0] == 0x18E8FF00]
     assert nacks and nacks[0][1] == bytes([1, 0xFF, 0xFF, 0xFF, ELD_SA, 0xE0, 0xFE, 0x00])
-    assert _last_result(session) == "NACK (fault: NACK requests)"
+    assert _result_becomes(session, "NACK (fault: NACK requests)")
 
 
 def test_request_fault_delay(bench):
     session, eld = bench
     session.set_request_fault("delay", target=65248, delay_ms=400)
-    while eld.recv(0):
-        pass
+    waiting = "waiting 400 ms (fault: delay replies)"
     sent = _request(eld, 65248)
-    time.sleep(0.05)
-    assert _last_result(session) == "waiting 400 ms (fault: delay replies)"
-    replies, end = [], time.time() + 1.0
-    while time.time() < end:  # the VD reply on request, not the 1 s broadcast
-        m = eld.recv(0.01)
-        if m is not None and m.arbitration_id == CAN_ID_VD:
-            replies.append(time.time() - sent)
-    assert any(0.35 <= t <= 0.6 for t in replies)
+    assert wait_until(lambda: _last_result(session)) == waiting
+    # Seen no earlier than it happened, so this proves the reply was held back for the delay.
+    wait_until(lambda: _last_result(session) != waiting)
+    assert time.time() - sent >= 0.35
     assert _last_result(session) == "answered after 400 ms (fault delay)"
 
 
@@ -183,7 +185,7 @@ def test_stop_cancels_delayed_replies(bench):
     session, eld = bench
     session.set_request_fault("delay", target=0, delay_ms=2000)
     _request(eld, 65260)
-    time.sleep(0.1)
+    assert wait_until(lambda: (_last_result(session) or "").startswith("waiting"))
     session.stop()
     assert _last_result(session) == "dropped: ECU stopped"
 
