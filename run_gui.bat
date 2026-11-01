@@ -5,13 +5,19 @@ rem First run creates .venv and installs dependencies; later runs start the GUI 
 cd /d "%~dp0"
 
 set "CONFIG=my_ecu.toml"
+set "EXAMPLE=my_ecu.example.toml"
 set "VENV_PY=.venv\Scripts\python.exe"
 rem Written only after a successful install, so an interrupted first run is retried.
 set "MARKER=.venv\.installed"
 
+rem my_ecu.toml is the user's own (not in git); start it from the example.
 if not exist "%CONFIG%" (
-    echo [error] Config "%CONFIG%" not found next to run_gui.bat.
-    goto :fail
+    if not exist "%EXAMPLE%" (
+        echo [error] Neither "%CONFIG%" nor "%EXAMPLE%" found next to run_gui.bat.
+        goto :fail
+    )
+    copy /y "%EXAMPLE%" "%CONFIG%" >nul || goto :fail
+    echo Created %CONFIG% from %EXAMPLE%; edit it to change the adapter, VIN or bitrate.
 )
 
 if exist "%MARKER%" goto :run

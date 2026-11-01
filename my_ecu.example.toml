@@ -1,11 +1,14 @@
-# Конфіг під CANable (candleLight) + ELD, J1939 250 kbit/s
-# Запуск: .venv\Scripts\python.exe -m j1939_emulator --gui --config my_ecu.toml
+# Config for run_gui.bat: a real CAN adapter (e.g. CANable / candleLight) at 250 kbit/s.
+# run_gui.bat copies this file to my_ecu.toml on the first run; edit my_ecu.toml, not this one.
+# Run by hand: python -m j1939_emulator --gui --config my_ecu.toml
 
 [bus]
 mode = "real"
-channel = "003A002B5946570920393630:0"   # candleLight за серійним номером (не залежить від порядку адаптерів)
+# Empty = the first adapter found. To always use one adapter, put its channel here,
+# e.g. a candleLight serial number "003A002B5946570920393630:0" (see --list-channels).
+channel = ""
 bitrate = 250000
-start_on_launch = false   # START натискаєте самі в GUI
+start_on_launch = false   # press START in the GUI
 
 [ecu]
 source_address = 0x00
@@ -17,7 +20,7 @@ manufacturer_code = 0
 identity_number = 0
 
 [vehicle]
-vin = "1HTMMAAL7HF251808"
+vin = "1HTMMAAL5GH123456"
 persist_meters = true    # keep odometer / engine hours per VIN between runs
 ignition = "run"         # "run" = engine running | "on" = key ON, engine off (0 rpm / 0 mph)
 
@@ -25,7 +28,7 @@ ignition = "run"         # "run" = engine running | "on" = key ON, engine off (0
 dtc_spn110_fmi3 = false
 dtc_spn190_fmi0 = false
 
-# Старт: двигун працює на холостих, авто стоїть
+# Start: engine idling, vehicle standing still
 [pgn.eec1]
 enabled = true
 cycle_ms = 20
@@ -34,12 +37,12 @@ spn190_rpm = 800
 [pgn.ccvs]
 enabled = true
 cycle_ms = 100
-spn84_speed_mph = 0       # миль/год (60 км/год ≈ 37.3 mph)
+spn84_speed_mph = 0       # mph (60 km/h is about 37.3 mph)
 
 [pgn.vd]
 enabled = true
 cycle_ms = 1000
-spn245_total_mi = 248912.4   # одометр, милі
+spn245_total_mi = 248912.4   # odometer, miles
 
 [pgn.hrvd]
 enabled = true
