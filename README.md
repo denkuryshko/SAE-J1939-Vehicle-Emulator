@@ -7,6 +7,8 @@ Built with **python-can**, **can-j1939** and **NiceGUI**.
 
 **Requirements:** Python **3.11+** · Windows, Linux or macOS · a browser for the GUI (Chrome, Edge or Safari)
 
+> **Bench use only.** The emulator transmits as the engine ECU (source address `0x00`). Do not connect it to the CAN bus of a real vehicle: it would conflict with the vehicle's own ECUs and can disturb their operation. Provided as is, without warranty (see [LICENSE](LICENSE)).
+
 ### What you get
 
 | Area | Capability |
@@ -77,13 +79,13 @@ A CAN frame is only delivered when at least one other node acknowledges (ACKs) i
 
 ## 1. Clone and set up
 
-Run every command from the **repository root** (`j1939-emulator`), not from the inner `j1939_emulator` package folder.
+Run every command from the **repository root** (`SAE-J1939-Vehicle-Emulator`), not from the inner `j1939_emulator` package folder.
 
 ### Windows PowerShell
 
 ```powershell
-git clone https://github.com/denkuryshko/j1939-emulator.git
-cd j1939-emulator
+git clone https://github.com/denkuryshko/SAE-J1939-Vehicle-Emulator.git
+cd SAE-J1939-Vehicle-Emulator
 
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -101,8 +103,8 @@ Or skip activation and call the venv Python directly, e.g. `.\.venv\Scripts\pyth
 ### Windows Command Prompt (cmd.exe)
 
 ```bat
-git clone https://github.com/denkuryshko/j1939-emulator.git
-cd j1939-emulator
+git clone https://github.com/denkuryshko/SAE-J1939-Vehicle-Emulator.git
+cd SAE-J1939-Vehicle-Emulator
 
 python -m venv .venv
 .venv\Scripts\activate.bat
@@ -111,8 +113,8 @@ python -m venv .venv
 ### Linux / macOS
 
 ```bash
-git clone https://github.com/denkuryshko/j1939-emulator.git
-cd j1939-emulator
+git clone https://github.com/denkuryshko/SAE-J1939-Vehicle-Emulator.git
+cd SAE-J1939-Vehicle-Emulator
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -168,16 +170,18 @@ python -m j1939_emulator --gui
 The default browser opens at `http://127.0.0.1:8080`. To start from a config file:
 
 ```bash
-python -m j1939_emulator --gui --config my_ecu.toml
+python -m j1939_emulator --gui --config examples/ecu.toml
 ```
 
 ### Windows: `run_gui.bat` (recommended)
 
-Double-click `run_gui.bat` (or put a shortcut to it on the desktop). It opens the GUI with `my_ecu.toml`. On the first run, when there is no `.venv` yet, it finds Python 3.11+, creates `.venv` and installs everything including the candleLight driver, which takes about a minute. Keep the console window open while you work and stop with **QUIT** in the GUI, so meters are saved and the adapter is released.
+Double-click `run_gui.bat` (or put a shortcut to it on the desktop). It opens the GUI with `my_ecu.toml`, your own config next to the launcher; if it is not there yet, it is created from [`my_ecu.example.toml`](my_ecu.example.toml) (real adapter, 250 kbit/s, first adapter found). `my_ecu.toml` is ignored by git, so your adapter, VIN and bitrate stay local. On the first run, when there is no `.venv` yet, it finds Python 3.11+, creates `.venv` and installs everything including the candleLight driver, which takes about a minute. Keep the console window open while you work and stop with **QUIT** in the GUI, so meters are saved and the adapter is released.
 
 `run_gui_no_console.bat` starts the same GUI without a console window (after the first run; before that it falls back to `run_gui.bat` for the setup). Its output, startup errors included, goes to `%APPDATA%\j1939-emulator\gui.log`. Stop it with **QUIT** in the GUI.
 
-Other options: `--host` / `--port` to change the address, `--no-browser` to skip auto-open. You can also change **Host** / **Port** in the top bar and click **Apply** (the UI restarts). **QUIT** stops the server.
+Other options: `--host` / `--port` to change the address, `--no-browser` to skip auto-open. You can also change **Host** / **Port** in **Settings** (the gear in the top bar) and click **Apply** (the UI restarts). **QUIT** stops the server.
+
+> The GUI has no login. Keep the default host `127.0.0.1` (this computer only); with `0.0.0.0` or a LAN address anyone on the network can open it and control the emulator and the CAN adapter.
 
 ### Workflow
 
@@ -341,7 +345,7 @@ List adapters, then pass the **number** to `--channel`:
 
 ```bash
 python -m j1939_emulator --list-channels --mode real
-python -m j1939_emulator --config my_ecu.toml --mode real --channel 1 --bitrate 250000
+python -m j1939_emulator --config examples/ecu.toml --mode real --channel 1 --bitrate 250000
 ```
 
 Example output:
@@ -393,7 +397,7 @@ eec1.cycle_ms, ccvs.cycle_ms, tco1.cycle_ms, vd.cycle_ms, hrvd.cycle_ms, hours.c
 
 ## 5. Config file
 
-See [`examples/ecu.toml`](examples/ecu.toml) (Virtual) and [`my_ecu.toml`](my_ecu.toml) (candleLight at 250 kbit/s). All fields:
+See [`examples/ecu.toml`](examples/ecu.toml) (Virtual) and [`my_ecu.example.toml`](my_ecu.example.toml) (real adapter at 250 kbit/s). All fields:
 
 ```toml
 [bus]
@@ -494,4 +498,4 @@ The tests cover PGN / VIN / DM1 / NAME encoding, config loading and meter persis
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Based on the original j1939-emulator by Embedded Verse (MIT).
