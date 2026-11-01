@@ -22,6 +22,8 @@ Built with **python-can**, **can-j1939** and **NiceGUI**.
 
 **Requirements:** Python **3.11+** · Windows, Linux or macOS · a browser for the GUI (Chrome, Edge or Safari)
 
+**Hardware:** to test a real ELD you need a **USB-CAN adapter** (tested: CANable / candleLight, Vector VN1610; other python-can adapters should work) wired to the ELD's J1939 connector, see [Hardware setup](#hardware-setup). Without an adapter the emulator runs on a virtual CAN bus, to try the app or test software.
+
 > **Bench use only.** The emulator transmits as the engine ECU (source address `0x00`). Do not connect it to the CAN bus of a real vehicle: it would conflict with the vehicle's own ECUs and can disturb their operation. Provided as is, without warranty (see [LICENSE](LICENSE)).
 
 ### What you get
@@ -73,7 +75,7 @@ The CAN frames change in J1939 resolution steps: 0.05 h (3 minutes) for engine h
 
 ## Hardware setup
 
-One supported CAN adapter is enough to run the emulator.
+One USB-CAN adapter connects the emulator to an ELD; no truck is needed. If the ELD only listens and never ACKs, add a second CAN node, see the [bench wiring checklist](#bench-wiring-checklist).
 
 ![J1939 Emulator hardware connections](docs/HardwareConnections.png)
 
