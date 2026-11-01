@@ -17,7 +17,7 @@ def _write(tmp_path, text):
     return p
 
 
-@pytest.mark.parametrize("name", ["examples/ecu.toml", "my_ecu.toml"])
+@pytest.mark.parametrize("name", ["examples/ecu.toml", "my_ecu.example.toml"])
 def test_shipped_configs_load(name):
     cfg = load_config(ROOT / name)
     assert cfg.identity.name == 0x1000000000000000
