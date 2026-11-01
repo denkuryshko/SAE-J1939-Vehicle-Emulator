@@ -1,11 +1,22 @@
 name: tests
 
+# Branches are tested through their pull request; main once more after the merge.
+# Changes to docs only (README, screenshots) do not run the tests.
 on:
   push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+# A new push to the same pull request cancels the run that is now out of date.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pytest:
