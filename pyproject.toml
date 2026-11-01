@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,19 @@ version = "2.0.0"
 description = "SAE J1939 vehicle ECU emulator (python-can + can-j1939)"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Denys Kuryshko" }]
+keywords = ["j1939", "can", "can-bus", "eld", "ecu", "emulator", "telematics", "python-can"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Testing",
+  "Topic :: System :: Hardware",
+]
 # Upper bounds: a new major (or, for can-j1939, minor) release must be tested first.
 # The session reaches into can-j1939 internals (ECU notifier and bus), so it is held to 2.0.x.
 dependencies = [
@@ -20,6 +33,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0,<10"]
+
+[project.urls]
+Homepage = "https://github.com/denkuryshko/SAE-J1939-Vehicle-Emulator"
+Issues = "https://github.com/denkuryshko/SAE-J1939-Vehicle-Emulator/issues"
 
 [project.scripts]
 j1939-emulator = "j1939_emulator.cli:main"
