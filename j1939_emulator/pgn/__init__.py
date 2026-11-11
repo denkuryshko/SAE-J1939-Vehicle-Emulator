@@ -8,6 +8,9 @@ from typing import Callable
 IDLE_RPM = 650.0
 # Exact (international mile); J1939 carries km and km/h, the GUI shows miles.
 KM_PER_MI = 1.609344
+# Largest odometer both VD (0.125 km/bit) and HRVD (5 m/bit) can send: the HRVD
+# limit, 0xFAFFFFFF x 5 m, rounded down to 0.1 mi (VD alone would allow ~327 million mi).
+ODOMETER_MAX_MI = 13083222.7
 # Engine Speed at or above this means the engine is running (follows the ignition switch).
 RUNNING_RPM = 600.0
 

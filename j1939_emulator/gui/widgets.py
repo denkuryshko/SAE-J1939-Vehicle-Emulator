@@ -37,6 +37,7 @@ from j1939_emulator.faults import (
     pgn_enabled,
 )
 from j1939_emulator.pgn import (
+    ODOMETER_MAX_MI,
     OVERRIDABLE_SPNS,
     SPN_ERROR,
     SPN_NORMAL,
@@ -578,7 +579,7 @@ def build_vd(session, payload_labels: dict) -> None:
         with details:
             payload_labels["vd"] = payload_strip(6, payload_hex(encode_vd(sig)))
         sync_odo = counter_spn(
-            "SPN 245", "Total Vehicle Distance", "mi", sig.spn245_total_mi, 999999, 1,
+            "SPN 245", "Total Vehicle Distance", "mi", sig.spn245_total_mi, ODOMETER_MAX_MI, 1,
             _bind(sig, "spn245_total_mi"), step=10,
             hint="Adds miles automatically while the ECU is running, based on Wheel-Based Vehicle Speed.",
         )

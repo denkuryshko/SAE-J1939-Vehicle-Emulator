@@ -1,6 +1,7 @@
 import pytest
 
 from j1939_emulator.pgn import (
+    ODOMETER_MAX_MI,
     SignalState,
     encode_ccvs,
     encode_eec1,
@@ -38,6 +39,15 @@ def test_hrvd_same_odometer_5_m_per_bit_in_bytes_1_4_trip_not_available():
     data = encode_hrvd(SignalState(spn245_total_mi=1000))
     assert int.from_bytes(data[:4], "little") == 321869  # 1609344 m / 5
     assert data[4:] == b"\xff" * 4
+
+
+def test_odometer_max_fits_vd_and_hrvd_without_clamping():
+    s = SignalState(spn245_total_mi=ODOMETER_MAX_MI)
+    hrvd = int.from_bytes(encode_hrvd(s)[:4], "little")
+    assert hrvd <= 0xFAFFFFFF
+    assert hrvd == round(ODOMETER_MAX_MI * 1609.344 / 5)  # not clamped
+    assert int.from_bytes(encode_vd(s)[4:], "little") < 0xFAFFFFFF
+    assert ODOMETER_MAX_MI + 0.1 > 0xFAFFFFFF * 5 / 1609.344  # the largest 0.1 mi step
 
 
 def test_hours_spn247_0_05_h_per_bit():
